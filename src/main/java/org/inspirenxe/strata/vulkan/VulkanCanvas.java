@@ -47,8 +47,8 @@ import java.util.function.Predicate;
  *     clip, the outer one clips to its rectangle.</li>
  *     <li>Text is drawn from the renderer's glyph atlas at the size it lands on screen. A shadow is the text again one
  *     unit down and to the right, at a quarter of its brightness, as the Swing adapter draws it.</li>
- *     <li>Sprites, pixel buffers and glyphs are sampled with nearest filtering. A missing sprite and a visual this
- *     renderer did not make draw as magenta.</li>
+ *     <li>Sprites, pixel buffers and glyphs are sampled with nearest filtering. A missing sprite draws as magenta, and
+ *     so does a visual that is neither one of {@link VulkanVisuals} nor an image this renderer made.</li>
  *     <li>Opacity multiplies into every draw's alpha. Layers need nothing: draws keep their order.</li>
  * </ul>
  */
@@ -411,6 +411,10 @@ final class VulkanCanvas implements Canvas {
         if (visual instanceof final VulkanImage image && image.belongsTo(this.renderer)) {
             this.texture(image.set(), rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height(), 0f, 0f,
                     1f, 1f, tint);
+            return;
+        }
+        if (visual instanceof final VulkanVisuals.PixelVisual pixels) {
+            this.pixels(pixels.pixels(), rect, tint);
             return;
         }
         this.fill(rect, MISSING_COLOR);

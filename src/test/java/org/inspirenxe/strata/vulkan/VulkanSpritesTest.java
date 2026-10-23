@@ -17,7 +17,10 @@ package org.inspirenxe.strata.vulkan;
 
 import org.inspirenxe.strata.api.geometry.Insets;
 import org.inspirenxe.strata.api.geometry.Rect;
+import org.inspirenxe.strata.api.geometry.Size;
 import org.inspirenxe.strata.api.theme.SpriteId;
+import org.inspirenxe.strata.api.visual.PixelBuffer;
+import org.inspirenxe.strata.api.visual.Visual;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -125,6 +128,19 @@ class VulkanSpritesTest {
                 0xFFFFFFFF));
         assertEquals(BLUE, cleared.argb(4, 4), "the image read again after clear");
         cleared.close();
+    }
+
+    @Test
+    void pixelVisualsDrawTheirPixels() {
+        final PixelBuffer pixels = PixelBuffer.of(2, 2).fill(BLUE).changed();
+        final Visual visual = VulkanVisuals.image(pixels);
+        assertEquals(new Size(2, 2), visual.size());
+        assertEquals(visual, VulkanVisuals.image(pixels));
+        assertNotEquals(visual, VulkanVisuals.image(PixelBuffer.of(2, 2)));
+        final OffscreenImage image = this.draw(null, 8, 8, 1f, canvas -> canvas.visual(visual, new Rect(0, 0, 8, 8),
+                0xFFFFFFFF));
+        assertEquals(BLUE, image.argb(4, 4));
+        image.close();
     }
 
     private OffscreenImage draw(final VulkanSprites sprites, final int width, final int height, final float scale,
