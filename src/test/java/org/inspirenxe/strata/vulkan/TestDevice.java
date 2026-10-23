@@ -96,7 +96,7 @@ import static org.lwjgl.vulkan.VK13.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RE
  * Khronos validation layer when it is installed, whose errors fail the test that caused them. A machine without a
  * Vulkan driver skips the tests that need a device, unless {@code strata.vulkan.requireDevice} is true.
  */
-final class TestDevice {
+final class TestDevice implements Submitter {
     private static final String VALIDATION = "VK_LAYER_KHRONOS_validation";
     private static TestDevice device;
     private static String failure;
@@ -233,12 +233,18 @@ final class TestDevice {
         return device;
     }
 
+    @Override
+    public VkDevice device() {
+        return this.logical;
+    }
+
     /**
      * Records commands into the test command buffer, submits them and waits until the device is idle.
      *
      * @param record what to record
      */
-    void submit(final Consumer<VkCommandBuffer> record) {
+    @Override
+    public void submit(final Consumer<VkCommandBuffer> record) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkResetCommandBuffer(this.commands, 0);
             final VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack)
@@ -259,7 +265,8 @@ final class TestDevice {
     /**
      * Waits until the device is idle.
      */
-    void idle() {
+    @Override
+    public void idle() {
         vkDeviceWaitIdle(this.logical);
         this.checkValidation();
     }

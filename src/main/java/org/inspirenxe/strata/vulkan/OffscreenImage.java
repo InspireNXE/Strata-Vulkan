@@ -30,14 +30,8 @@ import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.function.Consumer;
 
 import static org.lwjgl.util.vma.Vma.VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
@@ -75,14 +69,14 @@ import static org.lwjgl.vulkan.VK13.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
 import static org.lwjgl.vulkan.VK13.VK_STRUCTURE_TYPE_RENDERING_INFO;
 
 /**
- * An image the tests draw into with dynamic rendering and read back, transparent before each frame.
+ * An image to draw into with dynamic rendering and read back, for snapshots and tests.
  */
-final class Offscreen implements AutoCloseable {
+final class OffscreenImage implements AutoCloseable {
     /** The format of every offscreen image, so a renderer for {@link #TARGET} draws into any of them. */
     static final int FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
     static final VulkanTarget TARGET = VulkanTarget.dynamic(FORMAT);
 
-    private final TestDevice device;
+    private final Submitter submitter;
     private final long allocator;
     private final int width;
     private final int height;
@@ -92,8 +86,8 @@ final class Offscreen implements AutoCloseable {
     private final GpuBuffer readBack;
     private final int[] pixels;
 
-    Offscreen(final TestDevice device, final VulkanRenderer renderer, final int width, final int height) {
-        this.device = device;
+    OffscreenImage(final Submitter submitter, final VulkanRenderer renderer, final int width, final int height) {
+        this.submitter = submitter;
         this.allocator = renderer.allocator();
         this.width = width;
         this.height = height;
@@ -115,7 +109,7 @@ final class Offscreen implements AutoCloseable {
                     .usage(VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
             final LongBuffer image = stack.mallocLong(1);
             final PointerBuffer handle = stack.mallocPointer(1);
-            Vk.check(vmaCreateImage(this.allocator, info, allocation, image, handle, null), "create a test image");
+            Vk.check(vmaCreateImage(this.allocator, info, allocation, image, handle, null), "create an offscreen image");
             this.image = image.get(0);
             this.allocation = handle.get(0);
             final VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack)
@@ -125,7 +119,7 @@ final class Offscreen implements AutoCloseable {
                     .format(FORMAT);
             viewInfo.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
             final LongBuffer view = stack.mallocLong(1);
-            Vk.check(vkCreateImageView(device.logical, viewInfo, null, view), "create a test image view");
+            Vk.check(vkCreateImageView(this.submitter.device(), viewInfo, null, view), "create an offscreen image view");
             this.view = view.get(0);
         }
         this.readBack = GpuBuffer.create(this.allocator, (long) width * height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -159,7 +153,7 @@ final class Offscreen implements AutoCloseable {
      */
     void render(final int clearArgb, final Consumer<VkCommandBuffer> inside) {
         final float alpha = (clearArgb >>> 24) / 255f;
-        this.device.submit(commands -> {
+        this.submitter.submit(commands -> {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 this.barrier(commands, stack, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -182,7 +176,7 @@ final class Offscreen implements AutoCloseable {
                         .layerCount(1)
                         .pColorAttachments(color);
                 rendering.renderArea().extent().set(this.width, this.height);
-                final boolean core = this.device.logical.getCapabilities().Vulkan13;
+                final boolean core = this.submitter.device().getCapabilities().Vulkan13;
                 if (core) {
                     VK13.vkCmdBeginRendering(commands, rendering);
                 } else {
@@ -225,8 +219,8 @@ final class Offscreen implements AutoCloseable {
             final int g = bytes.get(i * 4 + 1) & 0xFF;
             final int b = bytes.get(i * 4 + 2) & 0xFF;
             final int a = bytes.get(i * 4 + 3) & 0xFF;
-            this.pixels[i] = a == 0 ? 0 : (a << 24) | (Offscreen.straight(r, a) << 16) | (Offscreen.straight(g, a) << 8)
-                    | Offscreen.straight(b, a);
+            this.pixels[i] = a == 0 ? 0 : (a << 24) | (OffscreenImage.straight(r, a) << 16) | (OffscreenImage.straight(g, a) << 8)
+                    | OffscreenImage.straight(b, a);
         }
     }
 
@@ -240,24 +234,19 @@ final class Offscreen implements AutoCloseable {
     }
 
     /**
-     * Writes the last frame to a PNG file, for looking at.
+     * Returns the last frame's pixels.
+     *
+     * @return a copy, ARGB with alpha not premultiplied, row by row from the top
      */
-    void save(final Path file) {
-        final BufferedImage out = new BufferedImage(this.width, this.height, BufferedImage.TYPE_INT_ARGB);
-        out.setRGB(0, 0, this.width, this.height, this.pixels, 0, this.width);
-        try {
-            Files.createDirectories(file.getParent());
-            ImageIO.write(out, "png", file.toFile());
-        } catch (final IOException e) {
-            throw new UncheckedIOException(e);
-        }
+    int[] pixels() {
+        return this.pixels.clone();
     }
 
     @Override
     public void close() {
-        this.device.idle();
+        this.submitter.idle();
         this.readBack.destroy(this.allocator);
-        vkDestroyImageView(this.device.logical, this.view, null);
+        vkDestroyImageView(this.submitter.device(), this.view, null);
         vmaDestroyImage(this.allocator, this.image, this.allocation);
     }
 

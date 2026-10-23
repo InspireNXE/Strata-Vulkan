@@ -62,16 +62,16 @@ class StrataVulkanTest {
     private TestDevice device;
     private VulkanRenderer renderer;
     private StrataVulkan strata;
-    private Offscreen image;
+    private OffscreenImage image;
 
     @BeforeEach
     void open() {
         this.device = TestDevice.get();
         this.renderer = new VulkanRenderer(this.device.logical, this.device.queue, this.device.queueFamily,
-                Offscreen.TARGET, 2);
+                OffscreenImage.TARGET, 2);
         this.strata = new StrataVulkan(new VulkanPlatform(TestFonts.metrics()), this.renderer, Themes.flat(), SCALE);
         this.strata.setBounds(0, 0, WIDTH, HEIGHT);
-        this.image = new Offscreen(this.device, this.renderer, WIDTH, HEIGHT);
+        this.image = new OffscreenImage(this.device, this.renderer, WIDTH, HEIGHT);
     }
 
     @AfterEach
@@ -87,7 +87,7 @@ class StrataVulkanTest {
     void drawsAScreenOfControls() {
         this.strata.screens().push(StrataVulkanTest::controls);
         this.render();
-        this.image.save(Path.of("build", "snapshots", "controls.png"));
+        Snapshots.save(this.image, Path.of("build", "snapshots", "controls.png"), WIDTH, HEIGHT);
 
         int drawn = 0;
         for (int y = 0; y < HEIGHT; y += 4) {
@@ -140,7 +140,7 @@ class StrataVulkanTest {
         this.strata.screens().key(Key.HOME, KeyAction.PRESS, Modifiers.NONE);
         this.render();
         assertEquals("Vulkan glyphs", box[0].text());
-        this.image.save(Path.of("build", "snapshots", "text-box.png"));
+        Snapshots.save(this.image, Path.of("build", "snapshots", "text-box.png"), WIDTH, HEIGHT);
     }
 
     @Test

@@ -32,29 +32,28 @@ final class GlyphAtlas {
 
     private final VulkanRenderer renderer;
     private final List<Page> pages;
-    private final Map<Key, Entry> entries;
-    private final VulkanFont.GlyphBitmap bitmap;
+    private final Map<Object, Entry> entries;
+    private final Bitmap bitmap;
 
     GlyphAtlas(final VulkanRenderer renderer) {
         this.renderer = renderer;
         this.pages = new ArrayList<>();
         this.entries = new HashMap<>();
-        this.bitmap = new VulkanFont.GlyphBitmap();
+        this.bitmap = new Bitmap();
     }
 
     /**
-     * Returns a glyph at a size, rendering it the first time.
+     * Returns the glyph filed under a key, rendering it the first time.
      *
-     * @param font the font the glyph is from
-     * @param glyph the glyph
-     * @param pixels the em square's height in device pixels
+     * @param key what the glyph is filed under, which must say everything that changes its pixels, such as the font,
+     *            the glyph and the size
+     * @param rasterizer renders the glyph the first time
      * @return the entry; {@link Entry#EMPTY} for a glyph that draws nothing
      */
-    Entry get(final VulkanFont font, final VulkanFont.Glyph glyph, final float pixels) {
-        final Key key = new Key(glyph, Math.max(1L, Math.round(pixels * 64.0)));
+    Entry get(final Object key, final Rasterizer rasterizer) {
         Entry entry = this.entries.get(key);
         if (entry == null) {
-            entry = this.render(font, glyph, key.size64() / 64f);
+            entry = this.render(rasterizer);
             this.entries.put(key, entry);
         }
         return entry;
@@ -87,9 +86,10 @@ final class GlyphAtlas {
         this.entries.clear();
     }
 
-    private Entry render(final VulkanFont font, final VulkanFont.Glyph glyph, final float pixels) {
-        final VulkanFont.GlyphBitmap bitmap = this.bitmap;
-        if (!font.rasterize(glyph, pixels, bitmap) || bitmap.pixels == null) {
+    private Entry render(final Rasterizer rasterizer) {
+        final Bitmap bitmap = this.bitmap;
+        bitmap.pixels = null;
+        if (!rasterizer.rasterize(bitmap) || bitmap.pixels == null) {
             return Entry.EMPTY;
         }
         final int width = bitmap.width;
@@ -116,7 +116,31 @@ final class GlyphAtlas {
                 (at[1] + height) / (float) PAGE, width, height, bitmap.left, bitmap.top);
     }
 
-    private record Key(VulkanFont.Glyph glyph, long size64) {
+    /**
+     * Renders a glyph into a bitmap.
+     */
+    @FunctionalInterface
+    interface Rasterizer {
+        /**
+         * Renders the glyph.
+         *
+         * @param out receives the coverage and its placement
+         * @return false if the glyph draws nothing
+         */
+        boolean rasterize(Bitmap out);
+    }
+
+    /**
+     * A rendered glyph: rows of 8-bit coverage, and where its top left sits from the pen on the baseline, in device
+     * pixels, with x to the right and {@code top} upward.
+     */
+    static final class Bitmap {
+        int width;
+        int height;
+        int pitch;
+        int left;
+        int top;
+        ByteBuffer pixels;
     }
 
     /**

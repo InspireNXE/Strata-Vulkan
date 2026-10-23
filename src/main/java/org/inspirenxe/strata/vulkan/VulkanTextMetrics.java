@@ -23,8 +23,7 @@ import java.util.Objects;
 
 /**
  * Measures text the way the Vulkan canvas draws it, with a {@link VulkanFont} for ordinary text and another for
- * monospaced text. A span's width is the sum of its glyphs' advances plus the kerning between neighbors from the same
- * face, in UI units at the font's size.
+ * monospaced text. Each font measures its own spans; the line height and ascent are the font's.
  *
  * <p>Use it on the UI thread only.</p>
  */
@@ -58,17 +57,17 @@ public final class VulkanTextMetrics implements TextMetrics {
 
     /**
      * Returns metrics for the operating system's sans-serif and monospaced fonts at {@value #DEFAULT_SIZE} units, as
-     * {@link VulkanFont#system} and {@link VulkanFont#systemMonospace} find them. The fonts are read once per call;
+     * {@link FreeTypeFont#system} and {@link FreeTypeFont#systemMonospace} find them. The fonts are read once per call;
      * keep the result.
      *
      * @return the metrics, without a monospaced font if the system has none of the ones looked for
      * @throws IllegalStateException if no sans-serif font is found; give the metrics a font file instead
      */
     public static VulkanTextMetrics defaults() {
-        final VulkanFont text = VulkanFont.system(DEFAULT_SIZE).orElseThrow(() -> new IllegalStateException(
-                "No system font found; give VulkanTextMetrics a font file with VulkanFont.load"));
-        return VulkanFont.systemMonospace(DEFAULT_SIZE).map(mono -> new VulkanTextMetrics(text, mono))
-                .orElseGet(() -> new VulkanTextMetrics(text));
+        final FreeTypeFont text = FreeTypeFont.system(DEFAULT_SIZE).orElseThrow(() -> new IllegalStateException(
+                "No system font found; give VulkanTextMetrics a font file with FreeTypeFont.load"));
+        return FreeTypeFont.systemMonospace(DEFAULT_SIZE).<VulkanTextMetrics>map(mono -> new VulkanTextMetrics(text,
+                mono)).orElseGet(() -> new VulkanTextMetrics(text));
     }
 
     /**
@@ -93,26 +92,7 @@ public final class VulkanTextMetrics implements TextMetrics {
 
     @Override
     public float width(final TextSpan span) {
-        final String text = span.text();
-        if (text.isEmpty()) {
-            return 0f;
-        }
-        final TextStyle style = span.style();
-        final VulkanFont font = this.font(style);
-        float ems = 0f;
-        VulkanFont.Glyph previous = null;
-        for (int i = 0; i < text.length(); ) {
-            final int codePoint = text.codePointAt(i);
-            i += Character.charCount(codePoint);
-            final VulkanFont.Glyph glyph = font.glyph(codePoint, style.bold(), style.italic());
-            if (previous != null) {
-                // Kerning never pulls a glyph back past its own advance, so text never narrows as it grows
-                ems += Math.max(font.kerning(previous, glyph), -glyph.advance);
-            }
-            ems += glyph.advance;
-            previous = glyph;
-        }
-        return Math.max(0f, ems * font.size());
+        return span.text().isEmpty() ? 0f : Math.max(0f, this.font(span.style()).width(span));
     }
 
     @Override

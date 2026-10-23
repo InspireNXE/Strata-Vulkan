@@ -21,11 +21,13 @@
  * passes draw into, a {@link org.inspirenxe.strata.vulkan.VulkanPlatform} with the fonts of a
  * {@link org.inspirenxe.strata.vulkan.VulkanTextMetrics}, and a {@link org.inspirenxe.strata.vulkan.StrataVulkan}
  * for each window or area that shows screens, whose {@code render} records a frame into the application's command
- * buffer. {@link org.inspirenxe.strata.vulkan.glfw.StrataGlfw} connects a view to a GLFW window; with another windowing
+ * buffer. {@link org.inspirenxe.strata.vulkan.VulkanSnapshot} renders a screen to pixels on a device of its own.
+ * {@link org.inspirenxe.strata.vulkan.glfw.StrataGlfw} connects a view to a GLFW window; with another windowing
  * library, send input to the view's screens and implement {@link org.inspirenxe.strata.vulkan.VulkanWindow}.</p>
  *
- * <p>Text is drawn with FreeType from any font file through {@link org.inspirenxe.strata.vulkan.VulkanFont}. Sprites
- * load through {@link org.inspirenxe.strata.vulkan.VulkanSprites}: from the class path, at
+ * <p>Text is drawn with FreeType from any font file through {@link org.inspirenxe.strata.vulkan.FreeTypeFont}, or
+ * from images through {@link org.inspirenxe.strata.vulkan.BitmapFont}. Sprites load through
+ * {@link org.inspirenxe.strata.vulkan.VulkanSprites}: from the class path, at
  * {@code assets/<namespace>/sprites/<path>.png} unless a {@link org.inspirenxe.strata.vulkan.SpriteResolver} names
  * another place, or from anywhere a {@link org.inspirenxe.strata.vulkan.SpriteSource} reads, with images for denser
  * displays beside them as {@code <path>@2x.png} and {@code <path>@1.5x.png}.

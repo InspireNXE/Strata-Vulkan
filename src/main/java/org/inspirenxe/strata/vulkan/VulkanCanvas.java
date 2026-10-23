@@ -284,19 +284,21 @@ final class VulkanCanvas implements Canvas {
         if (font.isClosed()) {
             return;
         }
+        // Drawn with the font the width was measured with, so spans side by side meet exactly
+        final float ascent = this.metrics.ascent(style);
+        final float baseline = y + ascent;
         if (style.shadow()) {
-            this.glyphs(span, font, x + 1f, y + 1f, VulkanCanvas.shadowOf(style.color()));
+            font.draw(this, span, x + 1f, baseline + 1f, VulkanCanvas.shadowOf(style.color()));
         }
-        this.glyphs(span, font, x, y, style.color());
+        font.draw(this, span, x, baseline, style.color());
+        // The lines sit where the Swing adapter draws them, one unit thick
         if (style.underline() || style.strikethrough()) {
-            final float width = this.metrics.width(span);
-            final float ascent = this.metrics.ascent(style);
-            final float thickness = Math.max(font.underlineThickness(), 1f / this.scale);
+            final float width = font.width(span);
             if (style.underline()) {
-                this.fill(new Rect(x, y + ascent + font.underlineOffset(), width, thickness), style.color());
+                this.fill(new Rect(x, baseline + 1f, width, 1f), style.color());
             }
             if (style.strikethrough()) {
-                this.fill(new Rect(x, y + ascent * 0.7f - thickness / 2f, width, thickness), style.color());
+                this.fill(new Rect(x, baseline - ascent * 0.35f, width, 1f), style.color());
             }
         }
     }
@@ -649,35 +651,65 @@ final class VulkanCanvas implements Canvas {
                 0f, 0f);
     }
 
-    private void glyphs(final TextSpan span, final VulkanFont font, final float x, final float y, final int argb) {
-        final TextStyle style = span.style();
-        final String text = span.text();
-        final float em = font.size() * this.scale;
-        final int baseline = Math.round(this.originY + this.scale * (y + this.metrics.ascent(style)));
-        final int color = DrawList.rgba(argb, this.opacity);
-        final GlyphAtlas atlas = this.renderer.glyphs();
-        float pen = this.originX + this.scale * x;
-        VulkanFont.Glyph previous = null;
-        for (int i = 0; i < text.length(); ) {
-            final int codePoint = text.codePointAt(i);
-            i += Character.charCount(codePoint);
-            final VulkanFont.Glyph glyph = font.glyph(codePoint, style.bold(), style.italic());
-            if (previous != null) {
-                pen += Math.max(font.kerning(previous, glyph), -glyph.advance) * em;
-            }
-            previous = glyph;
-            final GlyphAtlas.Entry entry = atlas.get(font, glyph, em);
-            if (entry.width() > 0) {
-                final int gx = Math.round(pen) + entry.left();
-                final int gy = baseline - entry.top();
-                if (!this.outside(gx, gy, gx + entry.width(), gy + entry.height())) {
-                    this.draws.texture(entry.texture().set);
-                    this.draws.quad(gx, gy, gx + entry.width(), gy + entry.height(), entry.u0(), entry.v0(),
-                            entry.u1(), entry.v1(), color, DrawList.GLYPH, 0f, 0f, 0f, 0f);
-                }
-            }
-            pen += glyph.advance * em;
+    // ------------------------------------------------------------------
+    // What fonts draw through
+    // ------------------------------------------------------------------
+
+    /**
+     * Returns how many device pixels one unit covers in the current transform.
+     */
+    float scale() {
+        return this.scale;
+    }
+
+    /**
+     * Converts a horizontal position in UI units to device pixels in the current transform.
+     */
+    float deviceX(final float x) {
+        return this.originX + this.scale * x;
+    }
+
+    /**
+     * Converts a vertical position in UI units to device pixels in the current transform.
+     */
+    float deviceY(final float y) {
+        return this.originY + this.scale * y;
+    }
+
+    /**
+     * Packs a color for vertices, with the current opacity.
+     */
+    int color(final int argb) {
+        return DrawList.rgba(argb, this.opacity);
+    }
+
+    /**
+     * Returns the renderer's glyph atlas.
+     */
+    GlyphAtlas atlas() {
+        return this.renderer.glyphs();
+    }
+
+    /**
+     * Draws a glyph with its pen on the baseline at a point in device pixels.
+     *
+     * @param entry the glyph in the atlas
+     * @param penX the pen's horizontal position, in device pixels
+     * @param baseline the baseline, in device pixels
+     * @param color the color, packed by {@link #color}
+     */
+    void glyph(final GlyphAtlas.Entry entry, final int penX, final int baseline, final int color) {
+        if (entry.width() <= 0) {
+            return;
         }
+        final int x = penX + entry.left();
+        final int y = baseline - entry.top();
+        if (this.outside(x, y, x + entry.width(), y + entry.height())) {
+            return;
+        }
+        this.draws.texture(entry.texture().set);
+        this.draws.quad(x, y, x + entry.width(), y + entry.height(), entry.u0(), entry.v0(), entry.u1(), entry.v1(),
+                color, DrawList.GLYPH, 0f, 0f, 0f, 0f);
     }
 
     /**

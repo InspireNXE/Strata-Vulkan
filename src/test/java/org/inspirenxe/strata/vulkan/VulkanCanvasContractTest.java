@@ -38,7 +38,7 @@ class VulkanCanvasContractTest extends CanvasContract {
 
     static VulkanRenderer renderer(final TestDevice device) {
         if (renderer == null) {
-            renderer = new VulkanRenderer(device.logical, device.queue, device.queueFamily, Offscreen.TARGET, 1);
+            renderer = new VulkanRenderer(device.logical, device.queue, device.queueFamily, OffscreenImage.TARGET, 1);
         }
         return renderer;
     }
@@ -47,7 +47,7 @@ class VulkanCanvasContractTest extends CanvasContract {
     protected Surface surface(final int width, final int height) {
         final TestDevice device = TestDevice.get();
         final VulkanRenderer renderer = VulkanCanvasContractTest.renderer(device);
-        final Offscreen image = new Offscreen(device, renderer, width, height);
+        final OffscreenImage image = new OffscreenImage(device, renderer, width, height);
         final FrameStream frames = renderer.openStream();
         final VulkanCanvas canvas = frames.begin(0, 0, width, height, 1f);
         canvas.configure(TestFonts.metrics(), new VulkanSprites(VulkanCanvasContractTest.class.getClassLoader()), null);

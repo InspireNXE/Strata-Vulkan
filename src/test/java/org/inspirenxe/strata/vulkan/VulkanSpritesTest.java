@@ -77,7 +77,7 @@ class VulkanSpritesTest {
         // A 6 by 6 frame: a red border 2 pixels wide around a blue middle
         final VulkanSprites sprites = new VulkanSprites(sprite -> Optional.of(VulkanSpritesTest.png(6, 6, RED, BLUE,
                 2)));
-        final Offscreen image = this.draw(sprites, 40, 40, 1f, canvas ->
+        final OffscreenImage image = this.draw(sprites, 40, 40, 1f, canvas ->
                 canvas.nineSlice(FRAME, new Rect(0, 0, 40, 40), Insets.of(2), 0xFFFFFFFF));
         assertEquals(RED, image.argb(0, 0));
         assertEquals(RED, image.argb(1, 20), "the left edge stays 2 pixels wide");
@@ -100,11 +100,11 @@ class VulkanSpritesTest {
                 return density == 2f ? Optional.of(VulkanSpritesTest.png(4, 4, GREEN, GREEN, 0)) : Optional.empty();
             }
         });
-        final Offscreen plain = this.draw(sprites, 8, 8, 1f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
+        final OffscreenImage plain = this.draw(sprites, 8, 8, 1f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
                 0xFFFFFFFF));
         assertEquals(RED, plain.argb(4, 4));
         plain.close();
-        final Offscreen dense = this.draw(sprites, 16, 16, 2f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
+        final OffscreenImage dense = this.draw(sprites, 16, 16, 2f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
                 0xFFFFFFFF));
         assertEquals(GREEN, dense.argb(8, 8), "the @2x image at two pixels per unit");
         dense.close();
@@ -115,25 +115,25 @@ class VulkanSpritesTest {
         final int[] color = {0xFFFFFFFF};
         final VulkanSprites sprites = new VulkanSprites(sprite -> Optional.of(VulkanSpritesTest.png(2, 2, color[0],
                 color[0], 0)));
-        final Offscreen tinted = this.draw(sprites, 8, 8, 1f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
+        final OffscreenImage tinted = this.draw(sprites, 8, 8, 1f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
                 GREEN));
         assertEquals(GREEN, tinted.argb(4, 4));
         tinted.close();
         color[0] = BLUE;
         sprites.clear();
-        final Offscreen cleared = this.draw(sprites, 8, 8, 1f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
+        final OffscreenImage cleared = this.draw(sprites, 8, 8, 1f, canvas -> canvas.sprite(FRAME, new Rect(0, 0, 8, 8),
                 0xFFFFFFFF));
         assertEquals(BLUE, cleared.argb(4, 4), "the image read again after clear");
         cleared.close();
     }
 
-    private Offscreen draw(final VulkanSprites sprites, final int width, final int height, final float scale,
+    private OffscreenImage draw(final VulkanSprites sprites, final int width, final int height, final float scale,
                            final Consumer<VulkanCanvas> draw) {
         final TestDevice device = TestDevice.get();
         if (renderer == null) {
-            renderer = new VulkanRenderer(device.logical, device.queue, device.queueFamily, Offscreen.TARGET, 1);
+            renderer = new VulkanRenderer(device.logical, device.queue, device.queueFamily, OffscreenImage.TARGET, 1);
         }
-        final Offscreen image = new Offscreen(device, renderer, width, height);
+        final OffscreenImage image = new OffscreenImage(device, renderer, width, height);
         final FrameStream frames = renderer.openStream();
         final VulkanCanvas canvas = frames.begin(0, 0, width, height, scale);
         canvas.configure(null, sprites, null);

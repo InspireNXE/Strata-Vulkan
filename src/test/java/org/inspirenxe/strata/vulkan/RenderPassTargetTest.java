@@ -67,7 +67,7 @@ class RenderPassTargetTest {
         final long renderPass = RenderPassTargetTest.renderPass(device);
         final VulkanRenderer renderer = new VulkanRenderer(device.logical, device.queue, device.queueFamily,
                 VulkanTarget.renderPass(renderPass, 0, false), 1);
-        final Offscreen image = new Offscreen(device, renderer, SIZE, SIZE);
+        final OffscreenImage image = new OffscreenImage(device, renderer, SIZE, SIZE);
         final long framebuffer = RenderPassTargetTest.framebuffer(device, renderPass, image.view());
         final FrameStream frames = renderer.openStream();
         try {
@@ -110,7 +110,7 @@ class RenderPassTargetTest {
     private static long renderPass(final TestDevice device) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             final VkAttachmentDescription.Buffer attachment = VkAttachmentDescription.calloc(1, stack)
-                    .format(Offscreen.FORMAT)
+                    .format(OffscreenImage.FORMAT)
                     .samples(VK_SAMPLE_COUNT_1_BIT)
                     .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
                     .storeOp(VK_ATTACHMENT_STORE_OP_STORE)

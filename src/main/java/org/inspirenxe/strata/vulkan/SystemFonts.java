@@ -26,7 +26,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
- * Finds the fonts {@link VulkanFont#system} and {@link VulkanFont#systemMonospace} use, by file name in the
+ * Finds the fonts {@link FreeTypeFont#system} and {@link FreeTypeFont#systemMonospace} use, by file name in the
  * operating system's font folders.
  */
 final class SystemFonts {
@@ -71,7 +71,7 @@ final class SystemFonts {
     private SystemFonts() {
     }
 
-    static Optional<VulkanFont> sans(final float size) {
+    static Optional<FreeTypeFont> sans(final float size) {
         if (OS.startsWith("windows")) {
             return SystemFonts.family(size, WINDOWS_SANS, SystemFonts::windows, WINDOWS_FALLBACKS);
         }
@@ -81,7 +81,7 @@ final class SystemFonts {
         return SystemFonts.family(size, LINUX_SANS, SystemFonts::linux, LINUX_FALLBACKS);
     }
 
-    static Optional<VulkanFont> monospace(final float size) {
+    static Optional<FreeTypeFont> monospace(final float size) {
         if (OS.startsWith("windows")) {
             return SystemFonts.family(size, WINDOWS_MONO, SystemFonts::windows, List.of());
         }
@@ -90,7 +90,7 @@ final class SystemFonts {
                 final Path file = Path.of(name);
                 if (Files.isRegularFile(file)) {
                     try {
-                        final VulkanFont.Builder builder = VulkanFont.builder(size);
+                        final FreeTypeFont.Builder builder = FreeTypeFont.builder(size);
                         return Optional.of(name.endsWith(".ttc") ? builder.collection(file).build()
                                 : builder.regular(file).build());
                     } catch (final IOException | IllegalArgumentException ignored) {
@@ -103,14 +103,14 @@ final class SystemFonts {
         return SystemFonts.family(size, LINUX_MONO, SystemFonts::linux, List.of());
     }
 
-    private static Optional<VulkanFont> family(final float size, final List<List<String>> families,
+    private static Optional<FreeTypeFont> family(final float size, final List<List<String>> families,
                                                final Resolver resolver, final List<String> fallbacks) {
         for (final List<String> family : families) {
             final Path regular = resolver.find(family.get(0));
             if (regular == null) {
                 continue;
             }
-            final VulkanFont.Builder builder = VulkanFont.builder(size).regular(regular);
+            final FreeTypeFont.Builder builder = FreeTypeFont.builder(size).regular(regular);
             final Path bold = resolver.find(family.get(1));
             final Path italic = resolver.find(family.get(2));
             final Path boldItalic = resolver.find(family.get(3));

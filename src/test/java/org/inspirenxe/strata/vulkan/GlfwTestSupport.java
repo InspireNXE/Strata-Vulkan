@@ -34,10 +34,10 @@ public final class GlfwTestSupport {
     public static View open(final Theme theme) {
         final TestDevice device = TestDevice.get();
         final VulkanRenderer renderer = new VulkanRenderer(device.logical, device.queue, device.queueFamily,
-                Offscreen.TARGET, 1);
+                OffscreenImage.TARGET, 1);
         final StrataVulkan strata = new StrataVulkan(new VulkanPlatform(TestFonts.metrics()), renderer, theme, 1f);
         strata.setBounds(0, 0, 256, 128);
-        return new View(renderer, strata, new Offscreen(device, renderer, 256, 128));
+        return new View(renderer, strata, new OffscreenImage(device, renderer, 256, 128));
     }
 
     /**
@@ -46,9 +46,9 @@ public final class GlfwTestSupport {
     public static final class View implements AutoCloseable {
         private final VulkanRenderer renderer;
         private final StrataVulkan strata;
-        private final Offscreen image;
+        private final OffscreenImage image;
 
-        View(final VulkanRenderer renderer, final StrataVulkan strata, final Offscreen image) {
+        View(final VulkanRenderer renderer, final StrataVulkan strata, final OffscreenImage image) {
             this.renderer = renderer;
             this.strata = strata;
             this.image = image;
