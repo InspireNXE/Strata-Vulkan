@@ -1,0 +1,27 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'Strata-Vulkan'
+// Strata's convention plugins, so the adapter builds and documents itself the same way as the library. Strata
+// includes the same build the same way, so the two share it.
+includeBuild('../Strata/build-logic')
+
+// Strata itself, from the checkout beside this one when there is a whole one, so changes to it reach the adapter at
+// once. Without it, strata_version comes from Maven Central; the publishing workflows check out only build-logic.
+if (file('../Strata/settings.gradle').exists()) {
+    includeBuild('../Strata') {
+        dependencySubstitution {
+            ['api', 'spi', 'core'].each { name ->
+                substitute(module("org.inspirenxe:strata-${name}")).using(project(":${name}"))
+            }
+        }
+    }
+}

@@ -1,0 +1,81 @@
+plugins {
+    id 'strata-java'
+    id 'strata-documented'
+}
+
+description = 'Vulkan adapter for Strata.'
+
+base {
+    // The artifact keeps the adapter's name, whatever the repository is called
+    archivesName = 'strata-vulkan'
+}
+
+// The platforms whose LWJGL natives come with the adapter, so an application needs none of its own for the libraries
+// only Strata uses
+def nativePlatforms = ['windows', 'windows-arm64', 'linux', 'linux-arm64', 'macos', 'macos-arm64']
+
+sourceSets {
+    // A build-time tool that compiles the GLSL shaders to SPIR-V with shaderc, so the jar holds SPIR-V and no compiler
+    shaderc
+}
+
+dependencies {
+    // Apps compile against the API and drive the SPI; the implementation stays hidden from them
+    api("org.inspirenxe:strata-api:${strata_version}")
+    api("org.inspirenxe:strata-spi:${strata_version}")
+    implementation("org.inspirenxe:strata-core:${strata_version}")
+
+    // Apps hand the adapter LWJGL's Vulkan objects, so those bindings are part of its API
+    api(platform("org.lwjgl:lwjgl-bom:${lwjgl_version}"))
+    api('org.lwjgl:lwjgl')
+    api('org.lwjgl:lwjgl-vulkan')
+    implementation('org.lwjgl:lwjgl-vma')
+    implementation('org.lwjgl:lwjgl-freetype')
+    implementation('org.lwjgl:lwjgl-stb')
+    // The GLFW bridge is optional. An app that uses it has GLFW on its class path already.
+    compileOnly('org.lwjgl:lwjgl-glfw')
+    nativePlatforms.each { natives ->
+        ['lwjgl', 'lwjgl-vma', 'lwjgl-freetype', 'lwjgl-stb'].each { library ->
+            runtimeOnly("org.lwjgl:${library}::natives-${natives}")
+        }
+    }
+
+    // The SPI contract tests this adapter must pass, and GLFW for the bridge's tests
+    testImplementation(testFixtures("org.inspirenxe:strata-spi:${strata_version}"))
+    testImplementation('org.lwjgl:lwjgl-glfw')
+    nativePlatforms.each { natives ->
+        testRuntimeOnly("org.lwjgl:lwjgl-glfw::natives-${natives}")
+    }
+
+    shadercImplementation(platform("org.lwjgl:lwjgl-bom:${lwjgl_version}"))
+    shadercImplementation('org.lwjgl:lwjgl')
+    shadercImplementation('org.lwjgl:lwjgl-shaderc')
+    nativePlatforms.each { natives ->
+        shadercRuntimeOnly("org.lwjgl:lwjgl::natives-${natives}")
+        shadercRuntimeOnly("org.lwjgl:lwjgl-shaderc::natives-${natives}")
+    }
+}
+
+def shaderOutput = layout.buildDirectory.dir('generated/shaders')
+def compileShaders = tasks.register('compileShaders', JavaExec) {
+    description = 'Compiles the GLSL shaders in src/main/glsl to SPIR-V.'
+    group = 'build'
+    classpath = sourceSets.shaderc.runtimeClasspath
+    mainClass = 'org.inspirenxe.strata.vulkan.shaderc.ShaderCompiler'
+    jvmArgs('--enable-native-access=ALL-UNNAMED')
+    def sources = layout.projectDirectory.dir('src/main/glsl')
+    inputs.dir(sources)
+    outputs.dir(shaderOutput)
+    argumentProviders.add({
+        [sources.asFile.absolutePath,
+         shaderOutput.get().dir('org/inspirenxe/strata/vulkan/shaders').asFile.absolutePath]
+    } as CommandLineArgumentProvider)
+}
+sourceSets.main.resources.srcDir(files(shaderOutput).builtBy(compileShaders))
+
+tasks.named('test', Test) {
+    // LWJGL calls native code
+    jvmArgs('--enable-native-access=ALL-UNNAMED')
+    // A machine without a Vulkan driver skips the tests that need a device instead of failing them
+    systemProperty('strata.vulkan.requireDevice', System.getenv('STRATA_VULKAN_REQUIRE_DEVICE') ?: 'false')
+}
