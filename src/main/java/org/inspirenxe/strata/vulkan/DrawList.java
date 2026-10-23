@@ -26,6 +26,9 @@ import java.util.Arrays;
  *
  * <p>Each vertex is 60 bytes: position and uv (4 floats), color (RGBA, 8 bits each), mode, four shape parameters,
  * the round clip's center and half size (4 floats) and its radius, negative for none.</p>
+ *
+ * <p>Each {@link #begin} starts a primitive: a quad, or the triangles of one polygon fill, with the stamp of the
+ * texture it samples. {@link Damage} compares the primitives of two frames.</p>
  */
 final class DrawList implements AutoCloseable {
     static final int STRIDE = 60;
@@ -42,6 +45,8 @@ final class DrawList implements AutoCloseable {
     static final int MASK = 8;
     /** Coverage is all or nothing. */
     static final int HARD = 0x100;
+    /** The stamp of a texture whose pixels can change at any time, such as an application's image. */
+    static final long LIVE = Long.MIN_VALUE;
 
     private ByteBuffer vertices;
     private int vertexCount;
@@ -53,11 +58,17 @@ final class DrawList implements AutoCloseable {
     private long[] sets;
     private int batchCount;
 
+    // Per primitive: first vertex and batch, and the stamp of its texture
+    private int[] primitives;
+    private long[] stamps;
+    private int primitiveCount;
+
     private int scissorX;
     private int scissorY;
     private int scissorWidth;
     private int scissorHeight;
     private long set;
+    private long stamp;
 
     private float clipX;
     private float clipY;
@@ -70,6 +81,8 @@ final class DrawList implements AutoCloseable {
         this.masks = MemoryUtil.memAlloc(4096);
         this.batches = new int[6 * 64];
         this.sets = new long[64];
+        this.primitives = new int[2 * 256];
+        this.stamps = new long[256];
     }
 
     /**
@@ -79,6 +92,7 @@ final class DrawList implements AutoCloseable {
         this.vertexCount = 0;
         this.maskBytes = 0;
         this.batchCount = 0;
+        this.primitiveCount = 0;
         this.clipRadius = -1f;
     }
 
@@ -93,12 +107,23 @@ final class DrawList implements AutoCloseable {
     }
 
     /**
-     * Sets the descriptor set of the texture later draws sample.
+     * Sets the descriptor set of a texture whose pixels never change, which later draws sample.
      *
      * @param set the set
      */
     void texture(final long set) {
+        this.texture(set, 0L);
+    }
+
+    /**
+     * Sets the descriptor set of the texture later draws sample, and the stamp of its pixels.
+     *
+     * @param set the set
+     * @param stamp a value that changes whenever the texture's pixels do, or {@link #LIVE}
+     */
+    void texture(final long set, final long stamp) {
         this.set = set;
+        this.stamp = stamp;
     }
 
     /**
@@ -121,7 +146,7 @@ final class DrawList implements AutoCloseable {
     }
 
     /**
-     * Makes room for vertices drawn with the current scissor and texture, opening a batch if either changed.
+     * Starts a primitive of vertices drawn with the current scissor and texture, opening a batch if either changed.
      *
      * @param count how many vertices follow
      */
@@ -130,6 +155,18 @@ final class DrawList implements AutoCloseable {
         if (needed > this.vertices.capacity()) {
             this.vertices = MemoryUtil.memRealloc(this.vertices, Math.max(needed, this.vertices.capacity() * 2));
         }
+        this.openBatch();
+        if (this.primitiveCount == this.stamps.length) {
+            this.stamps = Arrays.copyOf(this.stamps, this.primitiveCount * 2);
+            this.primitives = Arrays.copyOf(this.primitives, this.primitiveCount * 4);
+        }
+        this.primitives[this.primitiveCount * 2] = this.vertexCount;
+        this.primitives[this.primitiveCount * 2 + 1] = this.batchCount - 1;
+        this.stamps[this.primitiveCount] = this.stamp;
+        this.primitiveCount++;
+    }
+
+    private void openBatch() {
         final int last = this.batchCount - 1;
         if (last >= 0) {
             final int at = last * 6;
@@ -250,6 +287,32 @@ final class DrawList implements AutoCloseable {
 
     long batchSet(final int batch) {
         return this.sets[batch];
+    }
+
+    int primitiveCount() {
+        return this.primitiveCount;
+    }
+
+    /**
+     * Returns a primitive's first vertex.
+     */
+    int primitiveStart(final int primitive) {
+        return this.primitives[primitive * 2];
+    }
+
+    /**
+     * Returns the vertex after a primitive's last.
+     */
+    int primitiveEnd(final int primitive) {
+        return primitive + 1 < this.primitiveCount ? this.primitives[primitive * 2 + 2] : this.vertexCount;
+    }
+
+    int primitiveBatch(final int primitive) {
+        return this.primitives[primitive * 2 + 1];
+    }
+
+    long primitiveStamp(final int primitive) {
+        return this.stamps[primitive];
     }
 
     @Override

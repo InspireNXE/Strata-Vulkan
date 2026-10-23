@@ -409,8 +409,9 @@ final class VulkanCanvas implements Canvas {
     @Override
     public void visual(final Visual visual, final Rect rect, final int tint) {
         if (visual instanceof final VulkanImage image && image.belongsTo(this.renderer)) {
-            this.texture(image.set(), rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height(), 0f, 0f,
-                    1f, 1f, tint);
+            // The application draws into its image whenever it likes
+            this.texture(image.set(), DrawList.LIVE, rect.x(), rect.y(), rect.x() + rect.width(),
+                    rect.y() + rect.height(), 0f, 0f, 1f, 1f, tint);
             return;
         }
         if (visual instanceof final VulkanVisuals.PixelVisual pixels) {
@@ -632,14 +633,15 @@ final class VulkanCanvas implements Canvas {
     private void texture(final Texture texture, final float left, final float top, final float right,
                          final float bottom, final float u0, final float v0, final float u1, final float v1,
                          final int tint) {
-        this.texture(texture.set, left, top, right, bottom, u0, v0, u1, v1, tint);
+        this.texture(texture.set, texture.stamp(), left, top, right, bottom, u0, v0, u1, v1, tint);
     }
 
     /**
      * Draws part of a texture over a rectangle in UI units, its edges snapped to the pixel grid.
      */
-    private void texture(final long set, final float left, final float top, final float right, final float bottom,
-                         final float u0, final float v0, final float u1, final float v1, final int tint) {
+    private void texture(final long set, final long stamp, final float left, final float top, final float right,
+                         final float bottom, final float u0, final float v0, final float u1, final float v1,
+                         final int tint) {
         if ((tint >>> 24) == 0 || this.clipEmpty()) {
             return;
         }
@@ -650,7 +652,7 @@ final class VulkanCanvas implements Canvas {
         if (x1 <= x0 || y1 <= y0 || this.outside(x0, y0, x1, y1)) {
             return;
         }
-        this.draws.texture(set);
+        this.draws.texture(set, stamp);
         this.draws.quad(x0, y0, x1, y1, u0, v0, u1, v1, DrawList.rgba(tint, this.opacity), DrawList.TEXTURE, 0f, 0f,
                 0f, 0f);
     }

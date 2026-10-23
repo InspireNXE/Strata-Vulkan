@@ -21,6 +21,8 @@ import org.inspirenxe.strata.core.StrataCore;
 import org.inspirenxe.strata.spi.ScreenStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -54,7 +56,15 @@ import java.util.Objects;
  *     descriptor sets and push constants bound as it last set them, so set your own again after it.</li>
  *     <li>A game renders every frame anyway. An application that renders only when something changes renders when
  *     {@code screens().needsFrame()} is true, or when the platform's clock reaches {@code screens().nextFrameNanos()},
- *     and can be told when the first becomes true with {@code screens().setFrameRequester}.</li>
+ *     and can be told when the first becomes true with {@code screens().setFrameRequester}. Either way it renders no
+ *     sooner than {@code screens().frameIntervalNanos()} after its last render began, so the screens are drawn at
+ *     most {@code screens().frameRate()} times a second, 30 unless set.</li>
+ *     <li>An application that keeps its image between frames, such as a tool or an editor, can redraw only what
+ *     changed: {@link #prepare()} draws the screens and compares the frame with the last one, and the
+ *     {@link VulkanFrame} it returns says which rectangles changed and records only the draws there. A frame with
+ *     nothing changed needs no recording and no present. Call {@link #invalidate()} when the kept image is lost, such
+ *     as after the swapchain was made again. An application that clears its image every frame uses {@link #render},
+ *     which records every draw.</li>
  * </ul>
  *
  * <p>Use it on the render thread only, the thread that renders it and sends it input.</p>
@@ -75,6 +85,7 @@ public final class StrataVulkan implements AutoCloseable {
     private int y;
     private int width;
     private int height;
+    private long prepared;
     private boolean closed;
 
     /**
@@ -189,6 +200,7 @@ public final class StrataVulkan implements AutoCloseable {
         StrataVulkan.checkScale(scale);
         if (scale != this.scale) {
             this.scale = scale;
+            this.frames.invalidate();
             this.screens.setPixelsPerUnit(scale);
             this.resizeScreens();
         }
@@ -206,6 +218,9 @@ public final class StrataVulkan implements AutoCloseable {
     public void setBounds(final int x, final int y, final int width, final int height) {
         if (width < 0 || height < 0) {
             throw new IllegalArgumentException("A view's size must not be negative: " + width + " by " + height);
+        }
+        if (x != this.x || y != this.y || width != this.width || height != this.height) {
+            this.frames.invalidate();
         }
         this.x = x;
         this.y = y;
@@ -276,23 +291,103 @@ public final class StrataVulkan implements AutoCloseable {
      * {@linkplain VulkanRenderer#target() target}, and submit the command buffer to the renderer's queue afterwards.
      * Before it records anything, it submits the textures and glyphs the frame needs to that queue.
      *
-     * <p>A view with an empty area lays out and runs its screens' timers but records nothing.</p>
+     * <p>Every draw is recorded, for an image cleared before the pass. The next {@link #prepare()} damages the whole
+     * view. A view with an empty area lays out and runs its screens' timers but records nothing.</p>
      *
      * @param commands the command buffer
      * @throws IllegalStateException if the view or its renderer is closed, or Vulkan fails
      */
     public void render(final VkCommandBuffer commands) {
-        if (this.closed) {
-            throw new IllegalStateException("The view is closed");
-        }
-        final VulkanWindow window = this.window;
-        final VulkanCanvas canvas = this.frames.begin(this.x, this.y, this.width, this.height, this.scale);
-        canvas.configure(this.textMetrics, this.sprites, window == null ? null : window::showsCursor);
+        this.checkOpen();
+        this.prepared++;
+        final VulkanCanvas canvas = this.begin();
         try {
             this.screens.render(canvas);
         } finally {
             this.frames.end(commands);
         }
+        this.showCursorAndTitle(canvas);
+    }
+
+    /**
+     * Draws a frame of the screens and compares it with the view's last frame, for an application that keeps its
+     * image between frames. Call it on the render thread, in place of {@link #render}, before the pass begins: the
+     * frame's damage decides the render area, or that there is nothing to record. When something changed, it submits
+     * the textures and glyphs the frame needs to the renderer's queue; record the frame with
+     * {@link VulkanFrame#record} into a pass over the kept image, loaded rather than cleared, and submit that to the
+     * same queue. A frame where nothing changed takes nothing from the device and counts as no frame, so the
+     * application may skip recording, submitting and presenting.
+     *
+     * <p>The first frame, the frame after the bounds or the scale change or after {@link #invalidate()}, and the
+     * frame after a {@link #render} damage the whole view.</p>
+     *
+     * @return the frame
+     * @throws IllegalStateException if the view or its renderer is closed, or Vulkan fails
+     */
+    public VulkanFrame prepare() {
+        this.checkOpen();
+        this.prepared++;
+        final VulkanCanvas canvas = this.begin();
+        final int rects;
+        try {
+            this.screens.render(canvas);
+            rects = this.frames.damage();
+        } catch (final RuntimeException | Error e) {
+            this.frames.abandon();
+            this.frames.invalidate();
+            throw e;
+        }
+        this.showCursorAndTitle(canvas);
+        if (rects == 0) {
+            this.frames.abandon();
+            return new VulkanFrame(this, this.prepared, List.of());
+        }
+        this.frames.commit();
+        final List<PixelRect> damage = new ArrayList<>(rects);
+        for (int i = 0; i < rects; i++) {
+            final int x0 = this.frames.damageRect(i, 0);
+            final int y0 = this.frames.damageRect(i, 1);
+            damage.add(new PixelRect(x0, y0, this.frames.damageRect(i, 2) - x0, this.frames.damageRect(i, 3) - y0));
+        }
+        return new VulkanFrame(this, this.prepared, damage);
+    }
+
+    /**
+     * Makes the next {@link #prepare()} damage the whole view, because the application's kept image no longer holds
+     * the last frame, such as after the swapchain or the image was made again.
+     */
+    public void invalidate() {
+        this.frames.invalidate();
+    }
+
+    /**
+     * Records a prepared frame, for {@link VulkanFrame#record}.
+     */
+    void record(final VulkanFrame frame, final long number, final VkCommandBuffer commands) {
+        this.checkOpen();
+        if (number != this.prepared) {
+            throw new IllegalStateException("The view drew another frame after this one");
+        }
+        if (!frame.isEmpty()) {
+            this.frames.record(commands, true);
+        }
+    }
+
+    private VulkanCanvas begin() {
+        final VulkanWindow window = this.window;
+        final VulkanCanvas canvas = this.frames.begin(this.x, this.y, this.width, this.height, this.scale);
+        canvas.configure(this.textMetrics, this.sprites, window == null ? null : window::showsCursor);
+        return canvas;
+    }
+
+    private void checkOpen() {
+        if (this.closed) {
+            throw new IllegalStateException("The view is closed");
+        }
+    }
+
+    private void showCursorAndTitle(final VulkanCanvas canvas) {
+        final VulkanWindow window = this.window;
         if (window != null) {
             final CursorKind cursor = canvas.requestedCursor() == null ? CursorKind.ARROW : canvas.requestedCursor();
             if (cursor != this.shownCursor) {

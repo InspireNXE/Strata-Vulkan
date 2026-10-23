@@ -23,6 +23,7 @@ import org.lwjgl.vulkan.VkImageCreateInfo;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
 
 import java.nio.LongBuffer;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.lwjgl.util.vma.Vma.VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 import static org.lwjgl.util.vma.Vma.vmaCreateImage;
@@ -46,6 +47,8 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
  * its first upload has been recorded its layout is undefined.
  */
 final class Texture {
+    private static final AtomicLong IDS = new AtomicLong();
+
     final long image;
     final long allocation;
     final long view;
@@ -57,6 +60,9 @@ final class Texture {
     boolean ready;
     /** True once the texture waits to be destroyed, so queued uploads to it are dropped. */
     boolean retired;
+    /** Counts the times its pixels were replaced after the first upload. */
+    long version;
+    private final long id;
 
     private Texture(final long image, final long allocation, final long view, final long set, final int width,
                     final int height, final int bytesPerPixel) {
@@ -67,6 +73,17 @@ final class Texture {
         this.width = width;
         this.height = height;
         this.bytesPerPixel = bytesPerPixel;
+        this.id = IDS.incrementAndGet();
+    }
+
+    /**
+     * Returns a value that differs between textures, and changes when the {@link #version} does, for draws to tell
+     * whether the pixels they sample changed since the last frame.
+     *
+     * @return the stamp
+     */
+    long stamp() {
+        return this.id * 0x9E3779B97F4A7C15L + this.version;
     }
 
     /**

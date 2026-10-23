@@ -525,6 +525,7 @@ public final class VulkanRenderer implements AutoCloseable {
         }
         if (texture.version != buffer.version()) {
             texture.version = buffer.version();
+            texture.texture.version++;
             this.queueUpload(texture.texture, 0, 0, buffer.width(), buffer.height(), buffer.array().clone(), 0,
                     buffer.width());
         }

@@ -43,8 +43,10 @@ import static org.lwjgl.vulkan.VK10.vkWaitForFences;
 /**
  * The frames of one view: a canvas that records them, and for each frame in flight a slot with the vertex, coverage
  * and staging buffers and the upload command buffer that frame uses. A frame begins with {@link #begin}, which hands
- * out the canvas, and ends with {@link #end}, which uploads, copies the frame to its slot and records the draws into
- * the application's command buffer.
+ * out the canvas. {@link #end} then uploads, copies the frame to its slot and records every draw into the
+ * application's command buffer. A view that redraws only what changed calls {@link #damage()} instead, then
+ * {@link #commit()} and {@link #record} when something did, or {@link #abandon()} when nothing did, so the frame
+ * takes no slot and the device sees nothing of it.
  */
 final class FrameStream implements AutoCloseable {
     /** The push constants' size: the viewport's width and height, and the flags. */
@@ -55,8 +57,10 @@ final class FrameStream implements AutoCloseable {
     private final DrawList draws;
     private final VulkanCanvas canvas;
     private final Slot[] slots;
+    private final Damage damage;
     private int slot = -1;
     private long frames;
+    private boolean building;
     private boolean closed;
     private int originX;
     private int originY;
@@ -67,6 +71,7 @@ final class FrameStream implements AutoCloseable {
         this.renderer = renderer;
         this.draws = new DrawList();
         this.canvas = new VulkanCanvas(renderer, this.draws);
+        this.damage = new Damage();
         this.slots = new Slot[renderer.framesInFlight()];
         for (int i = 0; i < this.slots.length; i++) {
             this.slots[i] = new Slot(renderer);
@@ -87,10 +92,7 @@ final class FrameStream implements AutoCloseable {
         if (this.closed) {
             throw new IllegalStateException("The view is closed");
         }
-        this.frames++;
-        this.slot = (this.slot + 1) % this.slots.length;
-        this.slots[this.slot].await(this.renderer);
-        this.renderer.beginFrame();
+        this.building = true;
         this.originX = x;
         this.originY = y;
         this.width = width;
@@ -101,20 +103,84 @@ final class FrameStream implements AutoCloseable {
     }
 
     /**
-     * Ends the frame: submits the uploads it needs, then records its draws into the application's command buffer,
-     * which must be inside a pass of the renderer's target.
+     * Ends the frame: submits the uploads it needs, then records all its draws into the application's command buffer,
+     * which must be inside a pass of the renderer's target. The next {@link #damage()} covers the whole view.
      *
      * @param commands the command buffer
      */
     void end(final VkCommandBuffer commands) {
         this.canvas.end();
+        this.damage.invalidate();
+        this.commit();
+        this.record(commands, false);
+    }
+
+    /**
+     * Compares the frame's draws with the last compared frame's.
+     *
+     * @return how many damage rectangles the frame has; 0 when it draws what the last one did
+     */
+    int damage() {
+        this.canvas.end();
+        return this.damage.compare(this.draws, this.width, this.height);
+    }
+
+    /**
+     * Returns part of a damage rectangle of the last {@link #damage()}, in framebuffer pixels.
+     *
+     * @param rect the rectangle
+     * @param field 0 to 3 for its left, top, right and bottom edges
+     * @return the edge
+     */
+    int damageRect(final int rect, final int field) {
+        return this.damage.rect(rect, field) + (field % 2 == 0 ? this.originX : this.originY);
+    }
+
+    /**
+     * Makes the next {@link #damage()} cover the whole view.
+     */
+    void invalidate() {
+        this.damage.invalidate();
+    }
+
+    /**
+     * Drops a frame that changed nothing: it takes no slot, and its uploads wait for the next frame.
+     */
+    void abandon() {
+        this.building = false;
+    }
+
+    /**
+     * Gives the frame a slot: waits for the slot's last uploads, lets go of what the device is done with, submits the
+     * frame's uploads and copies its draws to the slot.
+     */
+    void commit() {
+        this.building = false;
+        this.frames++;
+        this.slot = (this.slot + 1) % this.slots.length;
         final Slot slot = this.slots[this.slot];
+        slot.await(this.renderer);
+        this.renderer.beginFrame();
         this.renderer.flushUploads(slot);
+        if (this.draws.vertexCount() > 0) {
+            slot.write(this.renderer, this.draws);
+        }
+    }
+
+    /**
+     * Records the committed frame's draws into the application's command buffer, which must be inside a pass of the
+     * renderer's target.
+     *
+     * @param commands the command buffer
+     * @param damaged true to draw only inside the last {@link #damage()}'s rectangles
+     */
+    void record(final VkCommandBuffer commands, final boolean damaged) {
+        final Slot slot = this.slots[this.slot];
         final int vertices = this.draws.vertexCount();
         if (vertices == 0 || this.width <= 0 || this.height <= 0) {
             return;
         }
-        slot.write(this.renderer, this.draws);
+        final int rects = damaged ? this.damage.rectCount() : 1;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, this.renderer.pipeline());
             final VkViewport.Buffer viewport = VkViewport.calloc(1, stack)
@@ -135,36 +201,52 @@ final class FrameStream implements AutoCloseable {
                     stack.longs(slot.maskSet), null);
             final VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
             long bound = 0L;
-            for (int batch = 0; batch < this.draws.batchCount(); batch++) {
-                final int count = this.draws.batch(batch, 5);
-                if (count == 0) {
-                    continue;
+            // The damage rectangles do not overlap, so each pixel is drawn once
+            for (int rect = 0; rect < rects; rect++) {
+                final int limitX0 = damaged ? this.damageRect(rect, 0) : Integer.MIN_VALUE;
+                final int limitY0 = damaged ? this.damageRect(rect, 1) : Integer.MIN_VALUE;
+                final int limitX1 = damaged ? this.damageRect(rect, 2) : Integer.MAX_VALUE;
+                final int limitY1 = damaged ? this.damageRect(rect, 3) : Integer.MAX_VALUE;
+                for (int batch = 0; batch < this.draws.batchCount(); batch++) {
+                    final int count = this.draws.batch(batch, 5);
+                    if (count == 0) {
+                        continue;
+                    }
+                    final int x0 = Math.max(Math.max(0, limitX0), this.originX + this.draws.batch(batch, 0));
+                    final int y0 = Math.max(Math.max(0, limitY0), this.originY + this.draws.batch(batch, 1));
+                    final int x1 = Math.min(limitX1, this.originX + this.draws.batch(batch, 0)
+                            + this.draws.batch(batch, 2));
+                    final int y1 = Math.min(limitY1, this.originY + this.draws.batch(batch, 1)
+                            + this.draws.batch(batch, 3));
+                    if (x1 <= x0 || y1 <= y0) {
+                        continue;
+                    }
+                    scissor.offset().set(x0, y0);
+                    scissor.extent().set(x1 - x0, y1 - y0);
+                    vkCmdSetScissor(commands, 0, scissor);
+                    final long set = this.draws.batchSet(batch);
+                    if (set != bound) {
+                        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                this.renderer.pipelineLayout(), 0, stack.longs(set), null);
+                        bound = set;
+                    }
+                    vkCmdDraw(commands, count, 1, this.draws.batch(batch, 4), 0);
                 }
-                final int x0 = Math.max(0, this.originX + this.draws.batch(batch, 0));
-                final int y0 = Math.max(0, this.originY + this.draws.batch(batch, 1));
-                final int x1 = this.originX + this.draws.batch(batch, 0) + this.draws.batch(batch, 2);
-                final int y1 = this.originY + this.draws.batch(batch, 1) + this.draws.batch(batch, 3);
-                if (x1 <= x0 || y1 <= y0) {
-                    continue;
-                }
-                scissor.offset().set(x0, y0);
-                scissor.extent().set(x1 - x0, y1 - y0);
-                vkCmdSetScissor(commands, 0, scissor);
-                final long set = this.draws.batchSet(batch);
-                if (set != bound) {
-                    vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            this.renderer.pipelineLayout(), 0, stack.longs(set), null);
-                    bound = set;
-                }
-                vkCmdDraw(commands, count, 1, this.draws.batch(batch, 4), 0);
             }
         }
     }
 
     /**
-     * Returns how many frames have begun.
+     * Returns how many frames have been committed, counting a frame being drawn, which may still commit.
      */
     long frames() {
+        return this.frames + (this.building ? 1 : 0);
+    }
+
+    /**
+     * Returns how many frames have been committed.
+     */
+    long committed() {
         return this.frames;
     }
 
