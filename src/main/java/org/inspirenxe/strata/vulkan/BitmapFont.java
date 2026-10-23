@@ -148,7 +148,6 @@ public final class BitmapFont extends VulkanFont {
         final TextStyle style = span.style();
         final String text = span.text();
         final int color = canvas.color(argb);
-        final int baselineDevice = Math.round(canvas.deviceY(baseline));
         float pen = x;
         int index = 0;
         while (index < text.length()) {
@@ -157,9 +156,12 @@ public final class BitmapFont extends VulkanFont {
             if (glyph != null) {
                 if (glyph.sheet >= 0) {
                     final GlyphAtlas.Entry entry = this.entry(canvas, glyph, style.italic());
-                    canvas.glyph(entry, Math.round(canvas.deviceX(pen)), baselineDevice, color);
+                    // The cell's top snaps to the pixel grid as a clip's edge does, so a cell at the top of its line
+                    // never pokes above a clip there
+                    final int top = Math.round(canvas.deviceY(baseline - glyph.top));
+                    canvas.glyph(entry, Math.round(canvas.deviceX(pen)), top + entry.top(), color);
                     if (style.bold()) {
-                        canvas.glyph(entry, Math.round(canvas.deviceX(pen + 1f)), baselineDevice, color);
+                        canvas.glyph(entry, Math.round(canvas.deviceX(pen + 1f)), top + entry.top(), color);
                     }
                 }
                 pen += glyph.advance + (style.bold() ? 1f : 0f);

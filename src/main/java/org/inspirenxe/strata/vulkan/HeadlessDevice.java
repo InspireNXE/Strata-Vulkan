@@ -242,15 +242,17 @@ final class HeadlessDevice implements Submitter {
         if (properties.apiVersion() >= VK_API_VERSION_1_3) {
             return true;
         }
+        // A device can list hundreds of extensions, more than the thread's stack holds, so they go on the heap
         final IntBuffer count = stack.mallocInt(1);
         vkEnumerateDeviceExtensionProperties(device, (String) null, count, null);
-        final VkExtensionProperties.Buffer extensions = VkExtensionProperties.malloc(count.get(0), stack);
-        vkEnumerateDeviceExtensionProperties(device, (String) null, count, extensions);
-        for (final VkExtensionProperties extension : extensions) {
-            if (extension.extensionNameString().equals(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
-                return true;
+        try (VkExtensionProperties.Buffer extensions = VkExtensionProperties.malloc(count.get(0))) {
+            vkEnumerateDeviceExtensionProperties(device, (String) null, count, extensions);
+            for (final VkExtensionProperties extension : extensions) {
+                if (extension.extensionNameString().equals(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
+                    return true;
+                }
             }
+            return false;
         }
-        return false;
     }
 }
