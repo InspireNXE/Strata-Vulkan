@@ -108,11 +108,13 @@ import static org.lwjgl.glfw.GLFW.glfwSetWindowTitle;
  * <p>{@link #attach} installs GLFW callbacks for the keyboard, characters, pointer, buttons, wheel, dropped files,
  * framebuffer size and content scale, and keeps the callbacks the window had. Input Strata uses stops there; input it
  * does not use goes on to the earlier callback, so the application still hears clicks and keys outside Strata's
- * screens. Pointer movement, the pointer leaving, size and scale always go on. Install the application's own
- * callbacks before attaching, or they replace Strata's. An application that keeps its own callbacks uses
- * {@link #create} instead and forwards events itself through {@link #key}, {@link #charTyped}, {@link #cursorPos},
- * {@link #mouseButton}, {@link #scroll}, {@link #cursorEnter} and {@link #drop}, and calls {@link #updateSize()} when
- * the framebuffer or the content scale changes.</p>
+ * screens. Key and button releases always go on, used or not, so an application that tracks held keys sees a key it
+ * saw pressed come up even when a screen opened in between. Pointer movement, the pointer leaving, size and scale
+ * always go on too. Install the application's own callbacks before attaching, or they replace Strata's. An
+ * application that keeps its own callbacks uses {@link #create} instead and forwards events itself through
+ * {@link #key}, {@link #charTyped}, {@link #cursorPos}, {@link #mouseButton}, {@link #scroll}, {@link #cursorEnter}
+ * and {@link #drop}, and calls {@link #updateSize()} when the framebuffer or the content scale changes; it should
+ * handle releases itself whatever those methods return.</p>
  *
  * <p>The view covers the whole framebuffer. Its scale is the zoom times the window's content scale, so a zoom of 2 on
  * a display scaled to 150% draws three framebuffer pixels per UI unit, and pointer positions are converted from the
@@ -406,7 +408,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
     private void install() {
         final GLFWKeyCallback key = glfwSetKeyCallback(this.window, null);
         this.callback(GLFWKeyCallback.create((window, code, scancode, action, mods) -> {
-            if (!this.key(code, scancode, action, mods) && key != null) {
+            if ((!this.key(code, scancode, action, mods) || action == GLFW_RELEASE) && key != null) {
                 key.invoke(window, code, scancode, action, mods);
             }
         }), callback -> glfwSetKeyCallback(this.window, callback), key);
@@ -428,7 +430,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
 
         final GLFWMouseButtonCallback button = glfwSetMouseButtonCallback(this.window, null);
         this.callback(GLFWMouseButtonCallback.create((window, code, action, mods) -> {
-            if (!this.mouseButton(code, action, mods) && button != null) {
+            if ((!this.mouseButton(code, action, mods) || action == GLFW_RELEASE) && button != null) {
                 button.invoke(window, code, action, mods);
             }
         }), callback -> glfwSetMouseButtonCallback(this.window, callback), button);
