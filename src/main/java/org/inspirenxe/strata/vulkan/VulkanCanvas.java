@@ -45,8 +45,10 @@ import java.util.function.Predicate;
  *     a coverage mask, filled by the nonzero rule.</li>
  *     <li>Round clips are anti-aliased too. Only the innermost round clip rounds its corners: inside another round
  *     clip, the outer one clips to its rectangle.</li>
- *     <li>Text is drawn from the renderer's glyph atlas at the size it lands on screen. A shadow is the text again one
- *     unit down and to the right, at a quarter of its brightness, as the Swing adapter draws it.</li>
+ *     <li>Text is drawn from the renderer's glyph atlas at the size it lands on screen. A style whose size differs
+ *     from its font's own is drawn as that font under a scale, so its glyphs are rasterized at the larger or smaller
+ *     size and its shadow offset and lines grow with it. A shadow is the text again one unit of the font's size down
+ *     and to the right, at a quarter of its brightness, as the Swing adapter draws it.</li>
  *     <li>Sprites, pixel buffers and glyphs are sampled with nearest filtering. A missing sprite draws as magenta, and
  *     so does a visual that is neither one of {@link VulkanVisuals} nor an image this renderer made.</li>
  *     <li>Opacity multiplies into every draw's alpha. Layers need nothing: draws keep their order.</li>
@@ -284,14 +286,38 @@ final class VulkanCanvas implements Canvas {
         if (font.isClosed()) {
             return;
         }
+        final float factor = this.metrics.scale(style, font);
+        if (factor == 1f) {
+            this.drawText(font, span, x, y);
+            return;
+        }
+        // Another size draws the font under a scale, so glyphs are rasterized at the size they land on screen
+        this.pushTranslation(x, y);
+        try {
+            this.pushScale(factor);
+            try {
+                this.drawText(font, span, 0f, 0f);
+            } finally {
+                this.popTransform();
+            }
+        } finally {
+            this.popTransform();
+        }
+    }
+
+    /**
+     * Draws a span with a font at the font's own size, with its shadow and lines.
+     */
+    private void drawText(final VulkanFont font, final TextSpan span, final float x, final float y) {
+        final TextStyle style = span.style();
         // Drawn with the font the width was measured with, so spans side by side meet exactly
-        final float ascent = this.metrics.ascent(style);
+        final float ascent = Math.min(font.ascent(), font.lineHeight());
         final float baseline = y + ascent;
         if (style.shadow()) {
             font.draw(this, span, x + 1f, baseline + 1f, VulkanCanvas.shadowOf(style.color()));
         }
         font.draw(this, span, x, baseline, style.color());
-        // The lines sit where the Swing adapter draws them, one unit thick
+        // The lines sit where the Swing adapter draws them, one unit of the font's size thick
         if (style.underline() || style.strikethrough()) {
             final float width = font.width(span);
             if (style.underline()) {

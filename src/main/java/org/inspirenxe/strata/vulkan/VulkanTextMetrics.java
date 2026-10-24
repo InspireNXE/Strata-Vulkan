@@ -15,15 +15,28 @@
  */
 package org.inspirenxe.strata.vulkan;
 
+import org.inspirenxe.strata.api.text.FontId;
 import org.inspirenxe.strata.api.text.TextMetrics;
 import org.inspirenxe.strata.api.text.TextSpan;
 import org.inspirenxe.strata.api.text.TextStyle;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
- * Measures text the way the Vulkan canvas draws it, with a {@link VulkanFont} for ordinary text and another for
- * monospaced text. Each font measures its own spans; the line height and ascent are the font's.
+ * Measures text the way the Vulkan canvas draws it, with a {@link VulkanFont} for ordinary text, another for
+ * monospaced text, and the families the application {@linkplain #register registers} under a {@link FontId}.
+ *
+ * <p>A style's {@linkplain TextStyle#font() font} picks a registered family, which wins over {@code monospace}; a
+ * family that is not registered, or no font at all, picks the monospaced font for a monospaced style when there is
+ * one and the ordinary font otherwise. A style's {@linkplain TextStyle#size() size} scales the chosen font from its
+ * own size, and a size of 0 is the {@linkplain #defaultSize() default size}, the ordinary font's. Widths, line heights
+ * and ascents scale alike, and the canvas draws the glyphs at the scaled size rather than stretching them.</p>
+ *
+ * <p>Registering, replacing or removing a family changes {@link #version()}, so open screens lay out again. The
+ * metrics never close a registered font: close it after removing it, or after the views that draw with it.</p>
  *
  * <p>Use it on the UI thread only.</p>
  */
@@ -33,6 +46,8 @@ public final class VulkanTextMetrics implements TextMetrics {
 
     private final VulkanFont text;
     private final VulkanFont monospace;
+    private final Map<FontId, VulkanFont> families = new HashMap<>();
+    private long version;
 
     /**
      * Creates metrics with one font for every style; monospaced spans use it too.
@@ -71,13 +86,83 @@ public final class VulkanTextMetrics implements TextMetrics {
     }
 
     /**
-     * Returns the font a style is measured and drawn with.
+     * Registers a family under an id, replacing any family registered under it before, so styles that name the id
+     * draw with it.
      *
-     * @param style the style; only monospace chooses between the fonts
+     * @param id the id styles name
+     * @param font the family
+     * @return the family registered under the id before, if any, which the caller closes when nothing draws with it
+     */
+    public Optional<VulkanFont> register(final FontId id, final VulkanFont font) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(font, "font");
+        final VulkanFont previous = this.families.put(id, font);
+        if (previous != font) {
+            this.version++;
+        }
+        return Optional.ofNullable(previous);
+    }
+
+    /**
+     * Removes the family registered under an id, so styles that name it draw with the default font again.
+     *
+     * @param id the id
+     * @return the family that was registered, if any, which the caller closes when nothing draws with it
+     */
+    public Optional<VulkanFont> unregister(final FontId id) {
+        final VulkanFont removed = this.families.remove(Objects.requireNonNull(id, "id"));
+        if (removed != null) {
+            this.version++;
+        }
+        return Optional.ofNullable(removed);
+    }
+
+    /**
+     * Returns the family registered under an id.
+     *
+     * @param id the id
+     * @return the family, or empty if none is registered under it
+     */
+    public Optional<VulkanFont> registered(final FontId id) {
+        return Optional.ofNullable(this.families.get(Objects.requireNonNull(id, "id")));
+    }
+
+    /**
+     * Returns the size text of size 0 measures and draws at: the ordinary font's own size.
+     *
+     * @return the size in UI units
+     */
+    public float defaultSize() {
+        return this.text.size();
+    }
+
+    /**
+     * Returns the font a style is measured and drawn with, at the font's own size.
+     *
+     * @param style the style; its font and monospace choose between the fonts
      * @return the font
      */
     public VulkanFont font(final TextStyle style) {
+        final FontId id = style.font();
+        if (id != null) {
+            final VulkanFont family = this.families.get(id);
+            if (family != null) {
+                return family;
+            }
+        }
         return style.monospace() && this.monospace != null ? this.monospace : this.text;
+    }
+
+    /**
+     * Returns how much larger than its font's own size a style draws.
+     *
+     * @param style the style
+     * @param font the font {@link #font} chose for it
+     * @return the factor, positive
+     */
+    float scale(final TextStyle style, final VulkanFont font) {
+        final float size = style.size() > 0f ? style.size() : this.text.size();
+        return size / font.size();
     }
 
     /**
@@ -92,17 +177,27 @@ public final class VulkanTextMetrics implements TextMetrics {
 
     @Override
     public float width(final TextSpan span) {
-        return span.text().isEmpty() ? 0f : Math.max(0f, this.font(span.style()).width(span));
+        if (span.text().isEmpty()) {
+            return 0f;
+        }
+        final VulkanFont font = this.font(span.style());
+        return Math.max(0f, font.width(span)) * this.scale(span.style(), font);
     }
 
     @Override
     public float lineHeight(final TextStyle style) {
-        return this.font(style).lineHeight();
+        final VulkanFont font = this.font(style);
+        return font.lineHeight() * this.scale(style, font);
     }
 
     @Override
     public float ascent(final TextStyle style) {
         final VulkanFont font = this.font(style);
-        return Math.min(font.ascent(), font.lineHeight());
+        return Math.min(font.ascent(), font.lineHeight()) * this.scale(style, font);
+    }
+
+    @Override
+    public long version() {
+        return this.version;
     }
 }

@@ -19,12 +19,22 @@ import org.inspirenxe.strata.spi.Platform;
 import org.inspirenxe.strata.spi.testing.PlatformContract;
 
 /**
- * Runs the SPI's platform contract on a Vulkan platform with every default, which has no clipboard.
+ * Runs the SPI's platform contract on a Vulkan platform with every default, which has no clipboard. Its scheduler
+ * runs tasks as views render, so letting time pass runs what is due, as a render would.
  */
 class VulkanPlatformContractTest extends PlatformContract {
+    private VulkanPlatform last;
+
     @Override
     protected Platform platform() {
-        return new VulkanPlatform(TestFonts.metrics());
+        this.last = new VulkanPlatform(TestFonts.metrics());
+        return this.last;
+    }
+
+    @Override
+    protected void passTime(final long millis) throws InterruptedException {
+        Thread.sleep(millis);
+        ((VulkanScheduler) this.last.scheduler()).runDue();
     }
 
     @Override

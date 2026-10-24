@@ -21,6 +21,7 @@ import org.inspirenxe.strata.spi.Clipboard;
 import org.inspirenxe.strata.spi.Clock;
 import org.inspirenxe.strata.spi.Conventions;
 import org.inspirenxe.strata.spi.Platform;
+import org.inspirenxe.strata.spi.Scheduler;
 import org.inspirenxe.strata.spi.TextInputSink;
 import org.inspirenxe.strata.spi.ThemeSource;
 
@@ -41,7 +42,8 @@ import java.util.function.BooleanSupplier;
  *
  * <p>Without a builder setting it: the clipboard is {@link Clipboard#NONE}, the clock is {@link Clock#SYSTEM}, there is
  * no text input signal and no file dialogs, key repeats are made by the host, themes come from a
- * {@link VulkanThemeSource} on this class's class loader, and shortcuts use Command on macOS and Control elsewhere.
+ * {@link VulkanThemeSource} on this class's class loader, shortcuts use Command on macOS and Control elsewhere, and
+ * repeating tasks run from a {@link VulkanScheduler} as the views render.
  * Without an executor, tasks handed to the UI thread run at the start of the next frame, and the UI thread is the
  * first one that renders.</p>
  */
@@ -53,6 +55,7 @@ public final class VulkanPlatform implements Platform {
     private final Capabilities capabilities;
     private final Conventions conventions;
     private final ThemeSource themes;
+    private final Scheduler scheduler;
     private final Optional<Executor> uiExecutor;
     private final Optional<BooleanSupplier> uiThreadCheck;
 
@@ -66,6 +69,7 @@ public final class VulkanPlatform implements Platform {
         this.conventions = builder.conventions;
         this.themes = builder.themes != null ? builder.themes
                 : new VulkanThemeSource(VulkanPlatform.class.getClassLoader());
+        this.scheduler = builder.scheduler != null ? builder.scheduler : new VulkanScheduler(builder.clock);
         this.uiExecutor = Optional.ofNullable(builder.uiExecutor);
         this.uiThreadCheck = Optional.ofNullable(builder.uiThreadCheck);
     }
@@ -92,6 +96,11 @@ public final class VulkanPlatform implements Platform {
     @Override
     public VulkanTextMetrics textMetrics() {
         return this.textMetrics;
+    }
+
+    @Override
+    public Scheduler scheduler() {
+        return this.scheduler;
     }
 
     @Override
@@ -145,6 +154,7 @@ public final class VulkanPlatform implements Platform {
         private boolean sendsKeyRepeat;
         private Conventions conventions = new Conventions(false, Builder.shortcutModifier(), true);
         private ThemeSource themes;
+        private Scheduler scheduler;
         private Executor uiExecutor;
         private BooleanSupplier uiThreadCheck;
 
@@ -217,6 +227,19 @@ public final class VulkanPlatform implements Platform {
          */
         public Builder themes(final ThemeSource themes) {
             this.themes = Objects.requireNonNull(themes, "themes");
+            return this;
+        }
+
+        /**
+         * Sets what runs the repeating tasks screens ask for, for an application with a scheduler of its own, such
+         * as its game loop's. It must follow {@link Scheduler}'s requirements, running tasks on the render thread.
+         * Without one, a {@link VulkanScheduler} runs them as the views render.
+         *
+         * @param scheduler the scheduler
+         * @return this builder
+         */
+        public Builder scheduler(final Scheduler scheduler) {
+            this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
             return this;
         }
 

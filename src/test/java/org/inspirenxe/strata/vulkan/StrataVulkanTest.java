@@ -19,6 +19,7 @@ import org.inspirenxe.strata.api.ComponentFactory;
 import org.inspirenxe.strata.api.component.Component;
 import org.inspirenxe.strata.api.component.CursorKind;
 import org.inspirenxe.strata.api.control.button.Button;
+import org.inspirenxe.strata.api.control.display.Label;
 import org.inspirenxe.strata.api.control.field.TextBox;
 import org.inspirenxe.strata.api.extension.CustomComponent;
 import org.inspirenxe.strata.api.extension.Gradient;
@@ -34,8 +35,11 @@ import org.inspirenxe.strata.api.input.Modifiers;
 import org.inspirenxe.strata.api.input.MouseButton;
 import org.inspirenxe.strata.api.layout.Orientation;
 import org.inspirenxe.strata.api.layout.StackPanel;
+import org.inspirenxe.strata.api.screen.Screen;
+import org.inspirenxe.strata.api.screen.ScreenHandle;
 import org.inspirenxe.strata.api.text.TextSpan;
 import org.inspirenxe.strata.api.text.TextStyle;
+import org.inspirenxe.strata.api.text.TextStylePatch;
 import org.inspirenxe.strata.api.theme.Themes;
 import org.inspirenxe.strata.api.visual.PixelBuffer;
 import org.junit.jupiter.api.AfterEach;
@@ -175,6 +179,73 @@ class StrataVulkanTest {
         this.render();
         assertEquals(List.of(CursorKind.ARROW, CursorKind.TEXT), cursors, "shown once per change");
         assertEquals(List.of(""), titles, "the untitled screen's title, once");
+    }
+
+    @Test
+    void textOfTwiceTheSizeDrawsTwiceAsTall() {
+        final Label[] labels = new Label[2];
+        this.strata.screens().push(factory -> {
+            labels[0] = factory.label("Hello");
+            labels[1] = factory.label("Hello");
+            return factory.absolutePanel()
+                    .add(labels[0], 10, 10)
+                    .add(factory.stackPanel().setTextStyle(TextStylePatch.of()
+                            .size(TestFonts.metrics().defaultSize() * 2f)).add(labels[1]), 10, 60);
+        });
+        this.render();
+        Snapshots.save(this.image, Path.of("build", "snapshots", "text-sizes.png"), WIDTH, HEIGHT);
+        final int small = this.inkHeight(labels[0].bounds());
+        final int large = this.inkHeight(labels[1].bounds());
+        assertTrue(small > 0, "the small label drew");
+        assertEquals(small * 2, large, 3, "glyphs twice as tall, drawn at that size: " + small + " and " + large);
+    }
+
+    @Test
+    void theViewRunsDueTasksWhenItRenders() {
+        final long[] nanos = new long[1];
+        final VulkanPlatform platform = VulkanPlatform.builder(TestFonts.metrics()).clock(() -> nanos[0]).build();
+        try (StrataVulkan view = new StrataVulkan(platform, this.renderer, Themes.flat(), SCALE)) {
+            view.setBounds(0, 0, WIDTH, HEIGHT);
+            final int[] runs = new int[1];
+            view.screens().push(new Screen() {
+                @Override
+                public Component<?> build(final ComponentFactory factory) {
+                    return factory.label("Ticking");
+                }
+
+                @Override
+                public void opened(final ScreenHandle handle) {
+                    handle.every(100L, () -> runs[0]++);
+                }
+            });
+            this.image.render(0xFF1E1F22, view::render);
+            assertEquals(100_000_000L, view.nextFrameNanos(), "the view wakes for the task");
+            nanos[0] = 100_000_000L;
+            assertEquals(0, runs[0], "nothing runs until the view renders");
+            this.image.render(0xFF1E1F22, view::render);
+            assertEquals(1, runs[0]);
+            assertEquals(200_000_000L, view.nextFrameNanos());
+        }
+    }
+
+    /**
+     * Counts the rows of device pixels inside a component's bounds that differ from the background.
+     */
+    private int inkHeight(final Rect bounds) {
+        int rows = 0;
+        final int x0 = Math.round(bounds.x() * SCALE);
+        final int x1 = Math.round((bounds.x() + bounds.width()) * SCALE);
+        final int y0 = Math.round(bounds.y() * SCALE);
+        final int y1 = Math.min(HEIGHT, Math.round((bounds.y() + bounds.height()) * SCALE));
+        for (int y = y0; y < y1; y++) {
+            for (int x = x0; x < x1; x++) {
+                if (this.image.argb(x, y) != 0xFF1E1F22) {
+                    rows++;
+                    break;
+                }
+            }
+        }
+        return rows;
     }
 
     private void render() {

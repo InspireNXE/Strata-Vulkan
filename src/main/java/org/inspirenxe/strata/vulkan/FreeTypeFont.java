@@ -156,6 +156,7 @@ public final class FreeTypeFont extends VulkanFont {
      *
      * @return the em square's height in UI units
      */
+    @Override
     public float size() {
         return this.size;
     }

@@ -55,10 +55,13 @@ import java.util.Objects;
  *     records the draws into the command buffer. Strata leaves the pipeline, viewport, scissor, vertex buffer,
  *     descriptor sets and push constants bound as it last set them, so set your own again after it.</li>
  *     <li>A game renders every frame anyway. An application that renders only when something changes renders when
- *     {@code screens().needsFrame()} is true, or when the platform's clock reaches {@code screens().nextFrameNanos()},
- *     and can be told when the first becomes true with {@code screens().setFrameRequester}. Either way it renders no
- *     sooner than {@code screens().frameIntervalNanos()} after its last render began, so the screens are drawn at
- *     most {@code screens().frameRate()} times a second, 30 unless set.</li>
+ *     {@code screens().needsFrame()} is true, or when the platform's clock reaches {@link #nextFrameNanos()}, and can
+ *     be told when the first becomes true with {@code screens().setFrameRequester}. Either way it renders no sooner
+ *     than {@code screens().frameIntervalNanos()} after its last render began, so the screens are drawn at most
+ *     {@code screens().frameRate()} times a second, 30 unless set.</li>
+ *     <li>The repeating tasks screens ask for with {@code ScreenHandle.every} run from the platform's
+ *     {@link VulkanScheduler}, unless the application gave the platform its own scheduler: {@link #render} and
+ *     {@link #prepare} run the tasks that are due before they draw.</li>
  *     <li>An application that keeps its image between frames, such as a tool or an editor, can redraw only what
  *     changed: {@link #prepare()} draws the screens and compares the frame with the last one, and the
  *     {@link VulkanFrame} it returns says which rectangles changed and records only the draws there. A frame with
@@ -72,6 +75,7 @@ import java.util.Objects;
 public final class StrataVulkan implements AutoCloseable {
     private static StrataVulkan defaultView;
 
+    private final VulkanPlatform platform;
     private final VulkanRenderer renderer;
     private final VulkanTextMetrics textMetrics;
     private final ScreenStack screens;
@@ -117,6 +121,7 @@ public final class StrataVulkan implements AutoCloseable {
                         final float scale, final VulkanSprites sprites) {
         StrataVulkan.checkScale(scale);
         this.renderer = Objects.requireNonNull(renderer, "renderer");
+        this.platform = platform;
         this.textMetrics = platform.textMetrics();
         this.sprites = Objects.requireNonNull(sprites, "sprites");
         this.screens = StrataCore.createScreenStack(platform, theme);
@@ -299,6 +304,7 @@ public final class StrataVulkan implements AutoCloseable {
      */
     public void render(final VkCommandBuffer commands) {
         this.checkOpen();
+        this.runDueTasks();
         this.prepared++;
         final VulkanCanvas canvas = this.begin();
         try {
@@ -326,6 +332,7 @@ public final class StrataVulkan implements AutoCloseable {
      */
     public VulkanFrame prepare() {
         this.checkOpen();
+        this.runDueTasks();
         this.prepared++;
         final VulkanCanvas canvas = this.begin();
         final int rects;
@@ -350,6 +357,27 @@ public final class StrataVulkan implements AutoCloseable {
             damage.add(new PixelRect(x0, y0, this.frames.damageRect(i, 2) - x0, this.frames.damageRect(i, 3) - y0));
         }
         return new VulkanFrame(this, this.prepared, damage);
+    }
+
+    /**
+     * Returns when the view next needs a frame without input: the earlier of the screens'
+     * {@code nextFrameNanos()} and the time the platform's {@link VulkanScheduler} next has a task due. An application
+     * that renders on demand waits for it, by the platform's clock. A platform given another scheduler counts the
+     * screens only.
+     *
+     * @return the time in nanoseconds, or {@link Long#MAX_VALUE} when nothing is timed
+     */
+    public long nextFrameNanos() {
+        final long screens = this.screens.nextFrameNanos();
+        return this.platform.scheduler() instanceof final VulkanScheduler scheduler
+                ? Math.min(screens, scheduler.nextDueNanos())
+                : screens;
+    }
+
+    private void runDueTasks() {
+        if (this.platform.scheduler() instanceof final VulkanScheduler scheduler) {
+            scheduler.runDue();
+        }
     }
 
     /**

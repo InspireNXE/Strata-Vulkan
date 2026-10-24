@@ -111,6 +111,17 @@ public final class BitmapFont extends VulkanFont {
         return width;
     }
 
+    /**
+     * Returns the line height, which a bitmap font takes as its size: text of twice the line height draws every glyph
+     * twice as large.
+     *
+     * @return the line height in UI units
+     */
+    @Override
+    public float size() {
+        return this.lineHeight;
+    }
+
     @Override
     public float lineHeight() {
         return this.lineHeight;
