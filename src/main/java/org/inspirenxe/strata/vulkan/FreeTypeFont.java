@@ -31,9 +31,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -83,6 +81,8 @@ public final class FreeTypeFont extends VulkanFont {
     private static final int BOLD = 1;
     private static final int ITALIC = 2;
     private static final int BOLD_ITALIC = 3;
+    /** How many sizes each glyph keeps its atlas entry for. */
+    private static final int KEPT_SIZES = 4;
 
     private final float size;
     private final long library;
@@ -90,7 +90,8 @@ public final class FreeTypeFont extends VulkanFont {
     private final Face[] styles;
     private final List<Face> fallbacks;
     private final List<Face> faces;
-    private final Map<Long, Glyph> glyphs;
+    // By code point and style, as glyph() packs them
+    private final LongMap<Glyph> glyphs;
     private boolean closed;
 
     private FreeTypeFont(final float size, final long library, final Face[] styles, final List<Face> fallbacks,
@@ -100,7 +101,7 @@ public final class FreeTypeFont extends VulkanFont {
         this.styles = styles;
         this.fallbacks = fallbacks;
         this.faces = faces;
-        this.glyphs = new HashMap<>();
+        this.glyphs = new LongMap<>();
     }
 
     /**
@@ -256,13 +257,12 @@ public final class FreeTypeFont extends VulkanFont {
             }
             previous = glyph;
             final GlyphAtlas atlas = canvas.atlas();
-            if (glyph.size64 != size64 || glyph.atlas != atlas) {
-                glyph.size64 = size64;
-                glyph.atlas = atlas;
-                glyph.entry = atlas.get(new GlyphKey(glyph, size64),
-                        bitmap -> this.rasterize(glyph, size64 / 64f, bitmap));
+            GlyphAtlas.Entry entry = glyph.entry(atlas, size64);
+            if (entry == null) {
+                entry = atlas.get(new GlyphKey(glyph, size64), bitmap -> this.rasterize(glyph, size64 / 64f, bitmap));
+                glyph.keep(atlas, size64, entry);
             }
-            canvas.glyph(glyph.entry, Math.round(pen), baselineDevice, color);
+            canvas.glyph(entry, Math.round(pen), baselineDevice, color);
             pen += glyph.advance * em;
         }
     }
@@ -286,19 +286,26 @@ public final class FreeTypeFont extends VulkanFont {
     }
 
     /**
-     * Returns the kerning between two glyphs drawn side by side, in ems.
+     * Returns the kerning between two glyphs drawn side by side, in ems, asking FreeType the first time for each pair
+     * of a face.
      */
     float kerning(final Glyph left, final Glyph right) {
         if (left.face != right.face || !left.face.kerning || this.closed) {
             return 0f;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            final FT_Vector vector = FT_Vector.malloc(stack);
-            if (FT_Get_Kerning(left.face.face, left.index, right.index, FT_KERNING_UNSCALED, vector) != FT_Err_Ok) {
-                return 0f;
+        final long pair = ((long) left.index << 32) | (right.index & 0xFFFFFFFFL);
+        float kerning = left.face.kernings.get(pair);
+        if (Float.isNaN(kerning)) {
+            kerning = 0f;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                final FT_Vector vector = FT_Vector.malloc(stack);
+                if (FT_Get_Kerning(left.face.face, left.index, right.index, FT_KERNING_UNSCALED, vector) == FT_Err_Ok) {
+                    kerning = vector.x() / left.face.unitsPerEm;
+                }
             }
-            return vector.x() / left.face.unitsPerEm;
+            left.face.kernings.put(pair, kerning);
         }
+        return kerning;
     }
 
     /**
@@ -401,6 +408,8 @@ public final class FreeTypeFont extends VulkanFont {
         final boolean kerning;
         final boolean bold;
         final boolean italic;
+        // The kerning of each pair of glyphs asked for so far, by their indices
+        final LongFloatMap kernings = new LongFloatMap();
         long pixelSize64;
 
         Face(final FT_Face face, final ByteBuffer data) {
@@ -425,11 +434,13 @@ public final class FreeTypeFont extends VulkanFont {
         final float advance;
         final boolean syntheticBold;
         final boolean syntheticItalic;
-        // The atlas entry last drawn, its atlas and its size, so steady frames skip the atlas's lookup. A font can
-        // serve several renderers, each with an atlas of its own.
-        long size64;
-        GlyphAtlas atlas;
-        GlyphAtlas.Entry entry;
+        // The atlas entries of the last sizes drawn, with their atlas and size, so drawing skips the atlas's lookup.
+        // Text drawn at several sizes, such as a title over its rows, keeps each. A font can serve several renderers,
+        // each with an atlas of its own.
+        private final long[] sizes = new long[KEPT_SIZES];
+        private final GlyphAtlas[] atlases = new GlyphAtlas[KEPT_SIZES];
+        private final GlyphAtlas.Entry[] entries = new GlyphAtlas.Entry[KEPT_SIZES];
+        private int next;
 
         Glyph(final Face face, final int index, final float advance, final boolean syntheticBold,
               final boolean syntheticItalic) {
@@ -438,6 +449,30 @@ public final class FreeTypeFont extends VulkanFont {
             this.advance = advance;
             this.syntheticBold = syntheticBold;
             this.syntheticItalic = syntheticItalic;
+        }
+
+        /**
+         * Returns the atlas entry kept for a size in an atlas.
+         *
+         * @return the entry, or {@code null} if none is kept
+         */
+        GlyphAtlas.Entry entry(final GlyphAtlas atlas, final long size64) {
+            for (int i = 0; i < KEPT_SIZES; i++) {
+                if (this.sizes[i] == size64 && this.atlases[i] == atlas) {
+                    return this.entries[i];
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Keeps the atlas entry of a size in an atlas, in place of the one kept longest.
+         */
+        void keep(final GlyphAtlas atlas, final long size64, final GlyphAtlas.Entry entry) {
+            this.sizes[this.next] = size64;
+            this.atlases[this.next] = atlas;
+            this.entries[this.next] = entry;
+            this.next = (this.next + 1) % KEPT_SIZES;
         }
     }
 

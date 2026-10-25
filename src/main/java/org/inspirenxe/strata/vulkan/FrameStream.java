@@ -47,6 +47,9 @@ import static org.lwjgl.vulkan.VK10.vkWaitForFences;
  * application's command buffer. A view that redraws only what changed calls {@link #damage()} instead, then
  * {@link #commit()} and {@link #record} when something did, or {@link #abandon()} when nothing did, so the frame
  * takes no slot and the device sees nothing of it.
+ *
+ * <p>The draws stay in the list after the frame. When nothing the frame drew with changed, {@link #repeat} records
+ * them again and {@link #repeatDamage()} works out the damage of drawing them again, without building them.</p>
  */
 final class FrameStream implements AutoCloseable {
     /** The push constants' size: the viewport's width and height, and the flags. */
@@ -66,6 +69,12 @@ final class FrameStream implements AutoCloseable {
     private int originY;
     private int width;
     private int height;
+    private float pixelsPerUnit;
+    // Whether the draws hold the whole last frame, the retirement count after it, and whether the current slot holds
+    // those draws
+    private boolean drawn;
+    private long drawnRetirements;
+    private boolean slotHoldsDraws;
 
     FrameStream(final VulkanRenderer renderer) {
         this.renderer = renderer;
@@ -93,13 +102,25 @@ final class FrameStream implements AutoCloseable {
             throw new IllegalStateException("The view is closed");
         }
         this.building = true;
+        this.drawn = false;
+        this.slotHoldsDraws = false;
         this.originX = x;
         this.originY = y;
         this.width = width;
         this.height = height;
+        this.pixelsPerUnit = pixelsPerUnit;
         this.draws.reset();
         this.canvas.begin(width, height, pixelsPerUnit);
         return this.canvas;
+    }
+
+    /**
+     * Ends a frame that was drawn whole, as {@link #end(VkCommandBuffer, boolean)} does.
+     *
+     * @param commands the command buffer
+     */
+    void end(final VkCommandBuffer commands) {
+        this.end(commands, true);
     }
 
     /**
@@ -107,12 +128,70 @@ final class FrameStream implements AutoCloseable {
      * which must be inside a pass of the renderer's target. The next {@link #damage()} covers the whole view.
      *
      * @param commands the command buffer
+     * @param complete false if drawing the frame failed part way, so it is never drawn again
      */
-    void end(final VkCommandBuffer commands) {
+    void end(final VkCommandBuffer commands, final boolean complete) {
         this.canvas.end();
         this.damage.invalidate();
         this.commit();
         this.record(commands, false);
+        if (complete) {
+            this.kept();
+        }
+    }
+
+    /**
+     * Notes that the draws hold the whole frame just drawn, which may be drawn again.
+     */
+    void kept() {
+        this.drawn = true;
+        this.drawnRetirements = this.renderer.retirements();
+    }
+
+    /**
+     * Returns whether the last frame can be drawn again as it is, in a view with the same bounds and scale: its draws
+     * are whole, no resource they sample was retired since, and no pixel buffer they show changed. The caller checks
+     * that the screens would draw the same.
+     *
+     * @param x the viewport's left edge in framebuffer pixels
+     * @param y the viewport's top edge in framebuffer pixels
+     * @param width the viewport's width in framebuffer pixels
+     * @param height the viewport's height in framebuffer pixels
+     * @param pixelsPerUnit framebuffer pixels per UI unit
+     * @return true if {@link #repeat} or {@link #repeatDamage()} may be used
+     */
+    boolean canRepeat(final int x, final int y, final int width, final int height, final float pixelsPerUnit) {
+        // A closed renderer fails the frame as building it does
+        return this.drawn && !this.closed && !this.renderer.isClosed() && x == this.originX && y == this.originY && width == this.width
+                && height == this.height && pixelsPerUnit == this.pixelsPerUnit
+                && this.drawnRetirements == this.renderer.retirements() && !this.canvas.pixelsChanged();
+    }
+
+    /**
+     * Records the last frame's draws again into the application's command buffer, as {@link #end} did, without
+     * building them, and from the slot that already holds them if one does. Call it only when {@link #canRepeat} is
+     * true. The next {@link #damage()} covers the whole view.
+     *
+     * @param commands the command buffer
+     */
+    void repeat(final VkCommandBuffer commands) {
+        this.damage.invalidate();
+        if (!this.slotHoldsDraws) {
+            this.commit();
+        }
+        this.record(commands, false);
+        this.kept();
+    }
+
+    /**
+     * Works out the damage of drawing the last frame's draws again, for a view that keeps its image, as
+     * {@link #damage()} does for a new frame. Call it only when {@link #canRepeat} is true; when it returns more
+     * than 0, {@link #commit()} and {@link #record} draw the damage.
+     *
+     * @return how many damage rectangles there are
+     */
+    int repeatDamage() {
+        return this.damage.repeat(this.draws, this.width, this.height);
     }
 
     /**
@@ -165,6 +244,7 @@ final class FrameStream implements AutoCloseable {
         if (this.draws.vertexCount() > 0) {
             slot.write(this.renderer, this.draws);
         }
+        this.slotHoldsDraws = true;
     }
 
     /**

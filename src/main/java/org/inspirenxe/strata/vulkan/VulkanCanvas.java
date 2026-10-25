@@ -104,6 +104,11 @@ final class VulkanCanvas implements Canvas {
     private boolean[] smoothings = new boolean[16];
     private int smoothingDepth;
 
+    // The pixel buffers the frame drew and the version of each, so drawing the frame again can tell they changed
+    private PixelBuffer[] drawnBuffers = new PixelBuffer[4];
+    private long[] drawnVersions = new long[4];
+    private int drawnCount;
+
     VulkanCanvas(final VulkanRenderer renderer, final DrawList draws) {
         this.renderer = renderer;
         this.draws = draws;
@@ -154,6 +159,8 @@ final class VulkanCanvas implements Canvas {
         this.smooth = true;
         this.smoothingDepth = 0;
         this.requestedCursor = null;
+        Arrays.fill(this.drawnBuffers, 0, this.drawnCount, null);
+        this.drawnCount = 0;
         this.draws.scissor(0, 0, width, height);
         this.draws.noRoundClip();
     }
@@ -163,6 +170,20 @@ final class VulkanCanvas implements Canvas {
      */
     void end() {
         this.draws.noRoundClip();
+    }
+
+    /**
+     * Returns whether a pixel buffer the frame drew changed since, so the frame no longer shows it as it is.
+     *
+     * @return true if one did
+     */
+    boolean pixelsChanged() {
+        for (int i = 0; i < this.drawnCount; i++) {
+            if (this.drawnBuffers[i].version() != this.drawnVersions[i]) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -453,6 +474,12 @@ final class VulkanCanvas implements Canvas {
                 || (tint >>> 24) == 0 || this.clipEmpty()) {
             return;
         }
+        if (this.drawnCount == this.drawnBuffers.length) {
+            this.drawnBuffers = Arrays.copyOf(this.drawnBuffers, this.drawnCount * 2);
+            this.drawnVersions = Arrays.copyOf(this.drawnVersions, this.drawnCount * 2);
+        }
+        this.drawnBuffers[this.drawnCount] = buffer;
+        this.drawnVersions[this.drawnCount++] = buffer.version();
         this.texture(this.renderer.pixels(buffer), rect.x(), rect.y(), rect.x() + rect.width(),
                 rect.y() + rect.height(), 0f, 0f, 1f, 1f, tint);
     }

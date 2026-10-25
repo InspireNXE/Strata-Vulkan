@@ -93,6 +93,29 @@ final class Damage {
     }
 
     /**
+     * Works out the damage of a frame that draws the last compared frame's draws again: the whole view after
+     * {@link #invalidate()} or a new size, which compares the draws as {@link #compare} does, and otherwise only the
+     * primitives that sample a live texture.
+     *
+     * @param draws the draws, the same as the last compared frame's unless the comparison was invalidated since
+     * @param width the view's width in device pixels
+     * @param height the view's height in device pixels
+     * @return how many rectangles the damage has
+     */
+    int repeat(final DrawList draws, final int width, final int height) {
+        if (!this.valid || width != this.width || height != this.height) {
+            return this.compare(draws, width, height);
+        }
+        this.rectCount = 0;
+        for (int i = 0; i < this.count; i++) {
+            if (this.hashes[i] == DrawList.LIVE) {
+                this.addBounds(this.bounds, i);
+            }
+        }
+        return this.rectCount;
+    }
+
+    /**
      * Returns part of a damage rectangle.
      *
      * @param rect the rectangle, below the count {@link #compare} returned

@@ -120,7 +120,9 @@ final class TestDevice implements Submitter {
                     .sType(VK_STRUCTURE_TYPE_APPLICATION_INFO)
                     .pApplicationName(stack.UTF8("Strata Vulkan tests"))
                     .apiVersion(Math.max(version, VK_API_VERSION_1_2));
-            this.validated = TestDevice.hasLayer(stack, VALIDATION);
+            // STRATA_VULKAN_VALIDATION=false leaves the layer off, for measuring
+            this.validated = !"false".equals(System.getenv("STRATA_VULKAN_VALIDATION"))
+                    && TestDevice.hasLayer(stack, VALIDATION);
             final VkInstanceCreateInfo info = VkInstanceCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO)
                     .pApplicationInfo(app);

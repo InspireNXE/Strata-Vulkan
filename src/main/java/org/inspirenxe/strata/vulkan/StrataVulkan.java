@@ -16,6 +16,7 @@
 package org.inspirenxe.strata.vulkan;
 
 import org.inspirenxe.strata.api.component.CursorKind;
+import org.inspirenxe.strata.api.text.Text;
 import org.inspirenxe.strata.api.theme.Theme;
 import org.inspirenxe.strata.core.StrataCore;
 import org.inspirenxe.strata.spi.ScreenStack;
@@ -24,6 +25,7 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * A stack of Strata screens drawn with Vulkan into a pass the application records. Make one per window or area that
@@ -81,7 +83,11 @@ public final class StrataVulkan implements AutoCloseable {
     private final ScreenStack screens;
     private final FrameStream frames;
     private VulkanSprites sprites;
+    // The version of the sprites the last frame drew, or -1 when it must not be drawn again
+    private long drawnSprites = -1L;
     private VulkanWindow window;
+    private Predicate<CursorKind> windowCursors;
+    private Text shownTitleText;
     private String shownTitle;
     private CursorKind shownCursor;
     private float scale;
@@ -170,6 +176,7 @@ public final class StrataVulkan implements AutoCloseable {
      */
     public void setSprites(final VulkanSprites sprites) {
         this.sprites = Objects.requireNonNull(sprites, "sprites");
+        this.drawnSprites = -1L;
     }
 
     /**
@@ -180,8 +187,12 @@ public final class StrataVulkan implements AutoCloseable {
      */
     public void setWindow(final VulkanWindow window) {
         this.window = window;
+        this.windowCursors = window == null ? null : window::showsCursor;
+        this.shownTitleText = null;
         this.shownTitle = null;
         this.shownCursor = null;
+        // The cursors the window shows can change what the screens draw
+        this.drawnSprites = -1L;
     }
 
     /**
@@ -299,6 +310,10 @@ public final class StrataVulkan implements AutoCloseable {
      * <p>Every draw is recorded, for an image cleared before the pass. The next {@link #prepare()} damages the whole
      * view. A view with an empty area lays out and runs its screens' timers but records nothing.</p>
      *
+     * <p>When the screens would draw what they drew for the last frame, and nothing the view drew with changed, the
+     * view records the last frame's draws again without drawing the screens, copying anything or submitting
+     * uploads.</p>
+     *
      * @param commands the command buffer
      * @throws IllegalStateException if the view or its renderer is closed, or Vulkan fails
      */
@@ -306,12 +321,20 @@ public final class StrataVulkan implements AutoCloseable {
         this.checkOpen();
         this.runDueTasks();
         this.prepared++;
+        if (this.repeats()) {
+            this.frames.repeat(commands);
+            this.showCursorAndTitle(this.frames.canvas());
+            return;
+        }
         final VulkanCanvas canvas = this.begin();
+        boolean drawn = false;
         try {
             this.screens.render(canvas);
+            drawn = true;
         } finally {
-            this.frames.end(commands);
+            this.frames.end(commands, drawn);
         }
+        this.drawnSprites = this.sprites.version();
         this.showCursorAndTitle(canvas);
     }
 
@@ -325,7 +348,9 @@ public final class StrataVulkan implements AutoCloseable {
      * application may skip recording, submitting and presenting.
      *
      * <p>The first frame, the frame after the bounds or the scale change or after {@link #invalidate()}, and the
-     * frame after a {@link #render} damage the whole view.</p>
+     * frame after a {@link #render} damage the whole view. When the screens would draw what they drew for the last
+     * frame, and nothing the view drew with changed, the view does not draw them, and the frame's damage covers only
+     * what shows an application's {@link VulkanImage}, unless the whole view is damaged.</p>
      *
      * @return the frame
      * @throws IllegalStateException if the view or its renderer is closed, or Vulkan fails
@@ -334,17 +359,24 @@ public final class StrataVulkan implements AutoCloseable {
         this.checkOpen();
         this.runDueTasks();
         this.prepared++;
-        final VulkanCanvas canvas = this.begin();
         final int rects;
-        try {
-            this.screens.render(canvas);
-            rects = this.frames.damage();
-        } catch (final RuntimeException | Error e) {
-            this.frames.abandon();
-            this.frames.invalidate();
-            throw e;
+        if (this.repeats()) {
+            rects = this.frames.repeatDamage();
+            this.showCursorAndTitle(this.frames.canvas());
+        } else {
+            final VulkanCanvas canvas = this.begin();
+            try {
+                this.screens.render(canvas);
+                rects = this.frames.damage();
+            } catch (final RuntimeException | Error e) {
+                this.frames.abandon();
+                this.frames.invalidate();
+                throw e;
+            }
+            this.frames.kept();
+            this.drawnSprites = this.sprites.version();
+            this.showCursorAndTitle(canvas);
         }
-        this.showCursorAndTitle(canvas);
         if (rects == 0) {
             this.frames.abandon();
             return new VulkanFrame(this, this.prepared, List.of());
@@ -374,6 +406,16 @@ public final class StrataVulkan implements AutoCloseable {
                 : screens;
     }
 
+    /**
+     * Returns whether the last frame can be drawn again in place of drawing the screens: they would draw the same,
+     * and neither the view's bounds, scale, sprites or window nor anything the frame sampled changed since.
+     */
+    private boolean repeats() {
+        return this.drawnSprites == this.sprites.version()
+                && this.frames.canRepeat(this.x, this.y, this.width, this.height, this.scale)
+                && !this.screens.needsRender(this.platform.clock().nanoTime());
+    }
+
     private void runDueTasks() {
         if (this.platform.scheduler() instanceof final VulkanScheduler scheduler) {
             scheduler.runDue();
@@ -401,10 +443,16 @@ public final class StrataVulkan implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the view's stream of frames, which tests read.
+     */
+    FrameStream stream() {
+        return this.frames;
+    }
+
     private VulkanCanvas begin() {
-        final VulkanWindow window = this.window;
         final VulkanCanvas canvas = this.frames.begin(this.x, this.y, this.width, this.height, this.scale);
-        canvas.configure(this.textMetrics, this.sprites, window == null ? null : window::showsCursor);
+        canvas.configure(this.textMetrics, this.sprites, this.windowCursors);
         return canvas;
     }
 
@@ -422,10 +470,15 @@ public final class StrataVulkan implements AutoCloseable {
                 this.shownCursor = cursor;
                 window.showCursor(cursor);
             }
-            final String title = this.screens.title().plain();
-            if (!title.equals(this.shownTitle)) {
-                this.shownTitle = title;
-                window.showTitle(title);
+            // Text is immutable, so the title the last frame showed needs no new string
+            final Text text = this.screens.title();
+            if (text != this.shownTitleText) {
+                this.shownTitleText = text;
+                final String title = text.plain();
+                if (!title.equals(this.shownTitle)) {
+                    this.shownTitle = title;
+                    window.showTitle(title);
+                }
             }
         }
     }

@@ -210,6 +210,8 @@ public final class VulkanRenderer implements AutoCloseable {
     private final Map<VulkanSprites, SpriteTextures> sprites;
     private final Map<PixelBuffer, PixelTexture> pixels;
     private long ticks;
+    // Moves on whenever a resource is retired, so a stream knows its last frame may sample one
+    private long retirements;
     private boolean closed;
 
     /**
@@ -437,6 +439,7 @@ public final class VulkanRenderer implements AutoCloseable {
      * @param destroy what destroys it
      */
     void retire(final Runnable destroy) {
+        this.retirements++;
         if (this.closed) {
             destroy.run();
             return;
@@ -446,6 +449,14 @@ public final class VulkanRenderer implements AutoCloseable {
             at[i] = this.streams.get(i).frames();
         }
         this.retired.add(new Retired(List.copyOf(this.streams), at, destroy));
+    }
+
+    /**
+     * Returns how many resources were retired so far. A frame drawn before the count moved may sample a resource
+     * that is about to be destroyed, so it must not be drawn again.
+     */
+    long retirements() {
+        return this.retirements;
     }
 
     /**
