@@ -36,6 +36,7 @@ import org.lwjgl.glfw.GLFWMouseButtonCallback;
 import org.lwjgl.glfw.GLFWScrollCallback;
 import org.lwjgl.glfw.GLFWWindowCloseCallback;
 import org.lwjgl.glfw.GLFWWindowContentScaleCallback;
+import org.lwjgl.glfw.GLFWWindowFocusCallback;
 import org.lwjgl.system.Callback;
 import org.lwjgl.system.MemoryStack;
 
@@ -92,6 +93,7 @@ import static org.lwjgl.glfw.GLFW.glfwSetMouseButtonCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowCloseCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowContentScaleCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetWindowFocusCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowShouldClose;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowTitle;
 
@@ -106,14 +108,16 @@ import static org.lwjgl.glfw.GLFW.glfwSetWindowTitle;
  * }</pre>
  *
  * <p>{@link #attach} installs GLFW callbacks for the keyboard, characters, pointer, buttons, wheel, dropped files,
- * framebuffer size and content scale, and keeps the callbacks the window had. Input Strata uses stops there; input it
- * does not use goes on to the earlier callback, so the application still hears clicks and keys outside Strata's
- * screens. Key and button releases always go on, used or not, so an application that tracks held keys sees a key it
- * saw pressed come up even when a screen opened in between. Pointer movement, the pointer leaving, size and scale
- * always go on too. Install the application's own callbacks before attaching, or they replace Strata's. An
- * application that keeps its own callbacks uses {@link #create} instead and forwards events itself through
- * {@link #key}, {@link #charTyped}, {@link #cursorPos}, {@link #mouseButton}, {@link #scroll}, {@link #cursorEnter}
- * and {@link #drop}, and calls {@link #updateSize()} when the framebuffer or the content scale changes; it should
+ * framebuffer size, content scale and window focus, and keeps the callbacks the window had. Input Strata uses stops
+ * there; input it does not use goes on to the earlier callback, so the application still hears clicks and keys outside
+ * Strata's screens. Key and button releases always go on, used or not, so an application that tracks held keys sees a
+ * key it saw pressed come up even when a screen opened in between. Pointer movement, the pointer leaving, size and
+ * scale always go on too, and so does window focus, which also makes the screens active or inactive through
+ * {@code activeChanged}, so focus leaves while the window is in the background. Install the application's own callbacks
+ * before attaching, or they replace Strata's. An application that keeps its own callbacks uses {@link #create} instead
+ * and forwards events itself through {@link #key}, {@link #charTyped}, {@link #cursorPos}, {@link #mouseButton},
+ * {@link #scroll}, {@link #cursorEnter} and {@link #drop}, calls {@link #updateSize()} when the framebuffer or the
+ * content scale changes, and calls {@code screens().activeChanged} when the window gains or loses focus; it should
  * handle releases itself whatever those methods return.</p>
  *
  * <p>The view covers the whole framebuffer. Its scale is the zoom times the window's content scale, so a zoom of 2 on
@@ -476,6 +480,14 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
                 scale.invoke(window, x, y);
             }
         }), callback -> glfwSetWindowContentScaleCallback(this.window, callback), scale);
+
+        final GLFWWindowFocusCallback focus = glfwSetWindowFocusCallback(this.window, null);
+        this.callback(GLFWWindowFocusCallback.create((window, focused) -> {
+            this.strata.screens().activeChanged(focused);
+            if (focus != null) {
+                focus.invoke(window, focused);
+            }
+        }), callback -> glfwSetWindowFocusCallback(this.window, callback), focus);
 
         final GLFWWindowCloseCallback close = glfwSetWindowCloseCallback(this.window, null);
         this.callback(GLFWWindowCloseCallback.create(window -> {
