@@ -15,6 +15,7 @@
  */
 package org.inspirenxe.strata.vulkan;
 
+import org.inspirenxe.strata.api.geometry.Size;
 import org.inspirenxe.strata.api.theme.SpriteId;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -86,6 +87,18 @@ public final class VulkanSprites {
      */
     public boolean has(final SpriteId sprite) {
         return this.plain(sprite).isPresent();
+    }
+
+    /**
+     * Returns a sprite's size in UI units: its plain image's width and height in pixels, one pixel to a unit. Views
+     * give it to their screens, so an image showing a sprite takes the sprite's size. The first call for a sprite
+     * loads its image, as drawing it does.
+     *
+     * @param sprite the sprite
+     * @return the size, or empty if the source has no image for the sprite that can be decoded
+     */
+    public Optional<Size> size(final SpriteId sprite) {
+        return this.plain(sprite).map(image -> new Size(image.width(), image.height()));
     }
 
     /**

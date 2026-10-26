@@ -166,6 +166,7 @@ public final class VulkanSnapshot {
         screens.setTooltipDelay(0L);
         screens.resize(width / scale, height / scale);
         screens.setPixelsPerUnit(scale);
+        screens.setSpriteSizes(sprites::size);
         final OffscreenImage image = new OffscreenImage(device, renderer, width, height);
         final FrameStream frames = renderer.openStream();
         try {

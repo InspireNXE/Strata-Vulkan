@@ -85,6 +85,8 @@ public final class StrataVulkan implements AutoCloseable {
     private VulkanSprites sprites;
     // The version of the sprites the last frame drew, or -1 when it must not be drawn again
     private long drawnSprites = -1L;
+    // The version of the sprites whose sizes the screens have, so a cleared set sizes images again
+    private long sizedSprites;
     private VulkanWindow window;
     private Predicate<CursorKind> windowCursors;
     private Text shownTitleText;
@@ -134,6 +136,7 @@ public final class StrataVulkan implements AutoCloseable {
         this.frames = renderer.openStream();
         this.scale = scale;
         this.screens.setPixelsPerUnit(scale);
+        this.giveSpriteSizes();
     }
 
     /**
@@ -177,6 +180,13 @@ public final class StrataVulkan implements AutoCloseable {
     public void setSprites(final VulkanSprites sprites) {
         this.sprites = Objects.requireNonNull(sprites, "sprites");
         this.drawnSprites = -1L;
+        this.giveSpriteSizes();
+    }
+
+    private void giveSpriteSizes() {
+        final VulkanSprites given = this.sprites;
+        this.sizedSprites = given.version();
+        this.screens.setSpriteSizes(given::size);
     }
 
     /**
@@ -419,6 +429,9 @@ public final class StrataVulkan implements AutoCloseable {
     private void runDueTasks() {
         if (this.platform.scheduler() instanceof final VulkanScheduler scheduler) {
             scheduler.runDue();
+        }
+        if (this.sizedSprites != this.sprites.version()) {
+            this.giveSpriteSizes();
         }
     }
 

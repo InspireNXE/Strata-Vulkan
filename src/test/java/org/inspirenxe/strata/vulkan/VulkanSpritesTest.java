@@ -76,6 +76,23 @@ class VulkanSpritesTest {
     }
 
     @Test
+    void sizesASpriteByItsPlainImage() {
+        final VulkanSprites sprites = new VulkanSprites(new SpriteSource() {
+            @Override
+            public Optional<byte[]> load(final SpriteId sprite) {
+                return sprite.equals(FRAME) ? Optional.of(VulkanSpritesTest.png(6, 4, RED, BLUE, 1)) : Optional.empty();
+            }
+
+            @Override
+            public Optional<byte[]> loadDense(final SpriteId sprite, final float density) {
+                return Optional.of(VulkanSpritesTest.png(12, 8, RED, BLUE, 2));
+            }
+        });
+        assertEquals(Optional.of(new Size(6, 4)), sprites.size(FRAME), "a denser image does not change the size");
+        assertTrue(sprites.size(SpriteId.of("test", "missing")).isEmpty());
+    }
+
+    @Test
     void nineSliceKeepsItsCornersAndStretchesItsMiddle() {
         // A 6 by 6 frame: a red border 2 pixels wide around a blue middle
         final VulkanSprites sprites = new VulkanSprites(sprite -> Optional.of(VulkanSpritesTest.png(6, 6, RED, BLUE,
