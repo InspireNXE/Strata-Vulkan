@@ -43,6 +43,7 @@ final class DrawList implements AutoCloseable {
     static final int ELLIPSE_STROKE = 6;
     static final int SHADOW = 7;
     static final int MASK = 8;
+    static final int BACKDROP = 9;
     /** Coverage is all or nothing. */
     static final int HARD = 0x100;
     /** The stamp of a texture whose pixels can change at any time, such as an application's image. */

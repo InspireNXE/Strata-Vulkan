@@ -25,6 +25,7 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Predicate;
 
 /**
@@ -83,6 +84,7 @@ public final class StrataVulkan implements AutoCloseable {
     private final ScreenStack screens;
     private final FrameStream frames;
     private VulkanSprites sprites;
+    private VulkanImage backdrop;
     // The version of the sprites the last frame drew, or -1 when it must not be drawn again
     private long drawnSprites = -1L;
     // The version of the sprites whose sizes the screens have, so a cleared set sizes images again
@@ -187,6 +189,34 @@ public final class StrataVulkan implements AutoCloseable {
         final VulkanSprites given = this.sprites;
         this.sizedSprites = given.version();
         this.screens.setSpriteSizes(given::size);
+    }
+
+    /**
+     * Gives the view the image that frosted glass blurs: what the application drew behind the screens, such as its
+     * scene rendered to an image. Each {@code Paint.backdrop} and {@code Painter.backdrop} blurs the part of it
+     * under its rectangle, then tints it, so panels look like glass over a scene that moves. The image covers the
+     * whole view, stretched to it, and is sampled every frame with its own sampler, linear unless the application
+     * chose another; frames where it changed are damage where a backdrop shows, as for any image of the
+     * application's. Without an image, a backdrop draws its tint alone. Close the image only after giving the view
+     * another or {@code null}.
+     *
+     * @param backdrop an image this view's renderer made with {@link VulkanRenderer#image}, or {@code null} for none
+     */
+    public void setBackdrop(final VulkanImage backdrop) {
+        if (backdrop != this.backdrop) {
+            this.backdrop = backdrop;
+            // The last frame's draws sampled the image before, so it is not drawn again as it was
+            this.drawnSprites = -1L;
+        }
+    }
+
+    /**
+     * Returns the image frosted glass blurs.
+     *
+     * @return the image, or empty when none is set
+     */
+    public Optional<VulkanImage> backdrop() {
+        return Optional.ofNullable(this.backdrop);
     }
 
     /**
@@ -466,6 +496,7 @@ public final class StrataVulkan implements AutoCloseable {
     private VulkanCanvas begin() {
         final VulkanCanvas canvas = this.frames.begin(this.x, this.y, this.width, this.height, this.scale);
         canvas.configure(this.textMetrics, this.sprites, this.windowCursors);
+        canvas.setBackdrop(this.backdrop);
         return canvas;
     }
 

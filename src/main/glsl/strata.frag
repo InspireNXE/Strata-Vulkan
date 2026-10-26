@@ -11,6 +11,7 @@ const uint ELLIPSE = 5u;
 const uint ELLIPSE_STROKE = 6u;
 const uint SHADOW = 7u;
 const uint MASK = 8u;
+const uint BACKDROP = 9u;
 // Drawn with hard edges: coverage is all or nothing
 const uint HARD = 0x100u;
 
@@ -114,6 +115,23 @@ float maskCoverage() {
     return float((word >> ((index & 3u) * 8u)) & 0xFFu) / 255.0;
 }
 
+// The application's backdrop, which covers the view, blurred around this pixel: 13 by 13 taps a sixth of the blur
+// apart, weighted by a Gaussian whose spread is a third of the blur, so the taps reach the blur's full distance
+vec3 backdrop(float blur) {
+    vec2 at = position / frame.viewport;
+    vec2 stride = vec2(blur / 6.0) / frame.viewport;
+    vec3 sum = vec3(0.0);
+    float total = 0.0;
+    for (int y = -6; y <= 6; y++) {
+        for (int x = -6; x <= 6; x++) {
+            float weight = exp(-float(x * x + y * y) / 8.0);
+            sum += texture(image, at + vec2(x, y) * stride).rgb * weight;
+            total += weight;
+        }
+    }
+    return sum / total;
+}
+
 void main() {
     uint kind = mode & 0xFFu;
     vec4 c = color;
@@ -140,6 +158,13 @@ void main() {
         cover = shadowCoverage(uv, params.xy, params.z, params.w);
     } else if (kind == MASK) {
         cover = maskCoverage();
+    } else if (kind == BACKDROP) {
+        vec3 blurred = backdrop(params.w);
+        if ((frame.flags & 1u) != 0u) {
+            blurred = toLinear(blurred);
+        }
+        c = vec4(blurred, c.a);
+        cover = roundBoxCoverage(uv, params.xy, params.z);
     }
     if (clipRadius >= 0.0) {
         cover *= roundBoxCoverage(position - clip.xy, clip.zw, clipRadius);

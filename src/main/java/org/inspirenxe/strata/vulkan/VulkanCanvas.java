@@ -53,6 +53,9 @@ import java.util.function.Predicate;
  *     <li>Sprites and pixel buffers are sampled with nearest filtering, and with linear filtering inside
  *     {@link #pushSampling pushSampling(LINEAR)}; glyphs always with nearest. A missing sprite draws as magenta, and
  *     so does a visual that is neither one of {@link VulkanVisuals} nor an image this renderer made.</li>
+ *     <li>A backdrop blurs the image {@link StrataVulkan#setBackdrop} gave the view, sampled where the rectangle sits
+ *     in the view, with 169 taps of a Gaussian, then fills the tint over it, both cut to the rounded corners. Without
+ *     an image it draws the tint alone.</li>
  *     <li>Opacity multiplies into every draw's alpha. Layers need nothing: draws keep their order.</li>
  * </ul>
  */
@@ -75,6 +78,7 @@ final class VulkanCanvas implements Canvas {
 
     private VulkanTextMetrics metrics;
     private VulkanSprites sprites;
+    private VulkanImage backdrop;
     private Predicate<CursorKind> cursors;
     private CursorKind requestedCursor;
 
@@ -138,6 +142,46 @@ final class VulkanCanvas implements Canvas {
         this.metrics = metrics;
         this.sprites = sprites;
         this.cursors = cursors;
+    }
+
+    /**
+     * Sets the image that backdrop calls blur, which covers the whole view.
+     *
+     * @param backdrop the image, or {@code null} to tint backdrops without blurring
+     */
+    void setBackdrop(final VulkanImage backdrop) {
+        this.backdrop = backdrop;
+    }
+
+    /**
+     * Blurs the backdrop image under the rectangle, as wide as the blur, cut to the rounded rectangle and under the
+     * opacity, then fills the rounded rectangle with the tint. With no backdrop image, or one that was closed, it
+     * draws the tint alone. The backdrop is sampled every frame, as an application's image is.
+     */
+    @Override
+    public void backdrop(final Rect rect, final float radius, final float blur, final int tint) {
+        final VulkanImage image = this.backdrop;
+        if (image != null && image.belongsTo(this.renderer) && blur > 0f && this.opacity > 0f && !this.clipEmpty()
+                && rect.width() > 0f && rect.height() > 0f) {
+            final float x0 = this.originX + this.scale * rect.x();
+            final float y0 = this.originY + this.scale * rect.y();
+            final float halfWidth = this.scale * rect.width() / 2f;
+            final float halfHeight = this.scale * rect.height() / 2f;
+            final float cx = x0 + halfWidth;
+            final float cy = y0 + halfHeight;
+            final float qx0 = Math.max((float) Math.floor(x0 - 1f), this.clipX0);
+            final float qy0 = Math.max((float) Math.floor(y0 - 1f), this.clipY0);
+            final float qx1 = Math.min((float) Math.ceil(cx + halfWidth + 1f), this.clipX1);
+            final float qy1 = Math.min((float) Math.ceil(cy + halfHeight + 1f), this.clipY1);
+            if (qx1 > qx0 && qy1 > qy0) {
+                final float r = Math.max(0f, Math.min(radius * this.scale, Math.min(halfWidth, halfHeight)));
+                final int mode = DrawList.BACKDROP | (this.smooth ? 0 : DrawList.HARD);
+                this.draws.texture(image.set(), DrawList.LIVE);
+                this.draws.quad(qx0, qy0, qx1, qy1, qx0 - cx, qy0 - cy, qx1 - cx, qy1 - cy,
+                        DrawList.rgba(0xFFFFFFFF, this.opacity), mode, halfWidth, halfHeight, r, blur * this.scale);
+            }
+        }
+        this.fillRoundRect(rect, radius, tint);
     }
 
     /**

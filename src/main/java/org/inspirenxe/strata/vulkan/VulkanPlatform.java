@@ -65,7 +65,7 @@ public final class VulkanPlatform implements Platform {
         this.clock = builder.clock;
         this.textInput = builder.textInput;
         this.capabilities = new Capabilities(builder.sendsKeyRepeat, builder.textMetrics.hasMonospace(), false, true,
-                false);
+                false, true);
         this.conventions = builder.conventions;
         this.themes = builder.themes != null ? builder.themes
                 : new VulkanThemeSource(VulkanPlatform.class.getClassLoader());
