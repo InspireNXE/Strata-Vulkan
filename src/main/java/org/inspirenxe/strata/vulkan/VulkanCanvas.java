@@ -25,6 +25,7 @@ import org.inspirenxe.strata.api.text.TextSpan;
 import org.inspirenxe.strata.api.text.TextStyle;
 import org.inspirenxe.strata.api.theme.SpriteId;
 import org.inspirenxe.strata.api.visual.PixelBuffer;
+import org.inspirenxe.strata.api.visual.Sampling;
 import org.inspirenxe.strata.api.visual.Visual;
 import org.inspirenxe.strata.spi.Canvas;
 
@@ -49,7 +50,8 @@ import java.util.function.Predicate;
  *     from its font's own is drawn as that font under a scale, so its glyphs are rasterized at the larger or smaller
  *     size and its shadow offset and lines grow with it. A shadow is the text again one unit of the font's size down
  *     and to the right, at a quarter of its brightness, as the Swing adapter draws it.</li>
- *     <li>Sprites, pixel buffers and glyphs are sampled with nearest filtering. A missing sprite draws as magenta, and
+ *     <li>Sprites and pixel buffers are sampled with nearest filtering, and with linear filtering inside
+ *     {@link #pushSampling pushSampling(LINEAR)}; glyphs always with nearest. A missing sprite draws as magenta, and
  *     so does a visual that is neither one of {@link VulkanVisuals} nor an image this renderer made.</li>
  *     <li>Opacity multiplies into every draw's alpha. Layers need nothing: draws keep their order.</li>
  * </ul>
@@ -103,6 +105,10 @@ final class VulkanCanvas implements Canvas {
     private boolean smooth;
     private boolean[] smoothings = new boolean[16];
     private int smoothingDepth;
+
+    private boolean linear;
+    private boolean[] samplings = new boolean[16];
+    private int samplingDepth;
 
     // The pixel buffers the frame drew and the version of each, so drawing the frame again can tell they changed
     private PixelBuffer[] drawnBuffers = new PixelBuffer[4];
@@ -158,6 +164,8 @@ final class VulkanCanvas implements Canvas {
         this.opacityDepth = 0;
         this.smooth = true;
         this.smoothingDepth = 0;
+        this.linear = false;
+        this.samplingDepth = 0;
         this.requestedCursor = null;
         Arrays.fill(this.drawnBuffers, 0, this.drawnCount, null);
         this.drawnCount = 0;
@@ -449,6 +457,22 @@ final class VulkanCanvas implements Canvas {
         }
     }
 
+    @Override
+    public void pushSampling(final Sampling sampling) {
+        if (this.samplingDepth == this.samplings.length) {
+            this.samplings = Arrays.copyOf(this.samplings, this.samplingDepth * 2);
+        }
+        this.samplings[this.samplingDepth++] = this.linear;
+        this.linear = sampling == Sampling.LINEAR;
+    }
+
+    @Override
+    public void popSampling() {
+        if (this.samplingDepth > 0) {
+            this.linear = this.samplings[--this.samplingDepth];
+        }
+    }
+
     // ------------------------------------------------------------------
     // Visuals, pixel buffers, layers and cursors
     // ------------------------------------------------------------------
@@ -686,7 +710,8 @@ final class VulkanCanvas implements Canvas {
     private void texture(final Texture texture, final float left, final float top, final float right,
                          final float bottom, final float u0, final float v0, final float u1, final float v1,
                          final int tint) {
-        this.texture(texture.set, texture.stamp(), left, top, right, bottom, u0, v0, u1, v1, tint);
+        this.texture(texture.set(this.renderer, this.linear), texture.stamp(), left, top, right, bottom, u0, v0, u1,
+                v1, tint);
     }
 
     /**

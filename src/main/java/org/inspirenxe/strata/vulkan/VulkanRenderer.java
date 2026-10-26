@@ -396,6 +396,10 @@ public final class VulkanRenderer implements AutoCloseable {
         return this.nearestSampler;
     }
 
+    long linearSampler() {
+        return this.linearSampler;
+    }
+
     long commandPool() {
         return this.commandPool;
     }

@@ -18,6 +18,7 @@ package org.inspirenxe.strata.vulkan;
 import org.inspirenxe.strata.api.geometry.Insets;
 import org.inspirenxe.strata.api.geometry.Rect;
 import org.inspirenxe.strata.api.geometry.Size;
+import org.inspirenxe.strata.api.visual.Sampling;
 import org.inspirenxe.strata.api.theme.SpriteId;
 import org.inspirenxe.strata.api.visual.PixelBuffer;
 import org.inspirenxe.strata.api.visual.Visual;
@@ -128,6 +129,26 @@ class VulkanSpritesTest {
                 0xFFFFFFFF));
         assertEquals(GREEN, dense.argb(8, 8), "the @2x image at two pixels per unit");
         dense.close();
+    }
+
+    @Test
+    void linearSamplingBlendsAndNearestStaysSharp() {
+        // A 4 by 4 image: a red border one pixel wide around a blue middle, drawn ten times larger
+        final VulkanSprites sprites = new VulkanSprites(sprite -> Optional.of(VulkanSpritesTest.png(4, 4, RED, BLUE,
+                1)));
+        final OffscreenImage nearest = this.draw(sprites, 40, 40, 1f, canvas -> canvas.sprite(FRAME,
+                new Rect(0, 0, 40, 40), 0xFFFFFFFF));
+        assertEquals(BLUE, nearest.argb(10, 20));
+        nearest.close();
+        final OffscreenImage linear = this.draw(sprites, 40, 40, 1f, canvas -> {
+            canvas.pushSampling(Sampling.LINEAR);
+            canvas.sprite(FRAME, new Rect(0, 0, 40, 40), 0xFFFFFFFF);
+            canvas.popSampling();
+        });
+        final int blend = linear.argb(10, 20);
+        assertTrue((blend >> 16 & 0xFF) > 0 && (blend & 0xFF) > 0, Integer.toHexString(blend));
+        assertEquals(BLUE, linear.argb(20, 20), "the middle is still blue");
+        linear.close();
     }
 
     @Test

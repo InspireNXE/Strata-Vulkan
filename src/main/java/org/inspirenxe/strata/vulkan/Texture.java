@@ -57,6 +57,8 @@ final class Texture {
     final int height;
     final int bytesPerPixel;
     /** True once an upload has moved the image to the shader read layout. */
+    // The set that samples the texture with linear filtering, or 0 until one is drawn that way
+    private long linearSet;
     boolean ready;
     /** True once the texture waits to be destroyed, so queued uploads to it are dropped. */
     boolean retired;
@@ -82,6 +84,20 @@ final class Texture {
      *
      * @return the stamp
      */
+    /**
+     * Returns the descriptor set that samples this texture with nearest or linear filtering. The texture's own set
+     * samples it the way it was made; the linear one is made the first time it is asked for.
+     */
+    long set(final VulkanRenderer renderer, final boolean linear) {
+        if (!linear) {
+            return this.set;
+        }
+        if (this.linearSet == 0L) {
+            this.linearSet = renderer.descriptors().image(renderer.imageLayout(), this.view, renderer.linearSampler());
+        }
+        return this.linearSet;
+    }
+
     long stamp() {
         return this.id * 0x9E3779B97F4A7C15L + this.version;
     }
@@ -140,6 +156,9 @@ final class Texture {
      */
     void destroy(final VulkanRenderer renderer) {
         renderer.descriptors().free(this.set);
+        if (this.linearSet != 0L) {
+            renderer.descriptors().free(this.linearSet);
+        }
         vkDestroyImageView(renderer.device(), this.view, null);
         vmaDestroyImage(renderer.allocator(), this.image, this.allocation);
     }
