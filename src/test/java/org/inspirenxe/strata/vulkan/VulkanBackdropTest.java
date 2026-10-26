@@ -109,6 +109,48 @@ class VulkanBackdropTest {
     }
 
     @Test
+    void drawsGlassOverAScene() {
+        final TestDevice device = TestDevice.get();
+        if (renderer == null) {
+            renderer = new VulkanRenderer(device.logical, device.queue, device.queueFamily, OffscreenImage.TARGET, 1);
+        }
+        final int width = 240;
+        final int height = 140;
+        final PixelBuffer scene = PixelBuffer.of(width, height).fill(0xFF1B2A41);
+        final int[] colors = {0xFFE05050, 0xFF4C86E0, 0xFF43A047, 0xFFE0A030};
+        for (int i = 0; i < 12; i++) {
+            final int cx = i * 53 % width;
+            final int cy = i * 37 % height;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < 400) {
+                        scene.set(x, y, colors[i % colors.length]);
+                    }
+                }
+            }
+        }
+        scene.changed();
+        final VulkanImage backdrop = renderer.image(renderer.pixels(scene).view, width, height);
+        final OffscreenImage image = new OffscreenImage(device, renderer, width, height);
+        final FrameStream frames = renderer.openStream();
+        final VulkanCanvas canvas = frames.begin(0, 0, width, height, 1f);
+        canvas.configure(null, null, null);
+        canvas.setBackdrop(backdrop);
+        // The scene as the application draws it, then a pane of glass over its middle
+        canvas.visual(backdrop, new Rect(0, 0, width, height), 0xFFFFFFFF);
+        canvas.backdrop(new Rect(40, 30, 160, 80), 10f, 10f, 0x60181A1F);
+        image.render(frames::end);
+        frames.close();
+        Snapshots.save(image, java.nio.file.Path.of("build", "snapshots", "backdrop.png"), width, height);
+        final int sharp = image.argb(30, 30);
+        final int glass = image.argb(120, 70);
+        assertTrue(glass != sharp, "the glass changes what is under it");
+        assertEquals(0xFF, glass >>> 24);
+        image.close();
+        backdrop.close();
+    }
+
+    @Test
     void thePlatformSaysItBlurs() {
         assertTrue(VulkanPlatform.builder(VulkanTextMetrics.defaults()).build().capabilities().blursBackdrop());
     }
