@@ -46,6 +46,8 @@ final class DrawList implements AutoCloseable {
     static final int BACKDROP = 9;
     /** Coverage is all or nothing. */
     static final int HARD = 0x100;
+    /** The texture's samples are linear, not sRGB-encoded, as from an application's {@code _SRGB} image. */
+    static final int LINEAR_SAMPLES = 0x200;
     /** The stamp of a texture whose pixels can change at any time, such as an application's image. */
     static final long LIVE = Long.MIN_VALUE;
 

@@ -56,9 +56,9 @@ final class Texture {
     final int width;
     final int height;
     final int bytesPerPixel;
-    /** True once an upload has moved the image to the shader read layout. */
     // The set that samples the texture with linear filtering, or 0 until one is drawn that way
     private long linearSet;
+    /** True once an upload has moved the image to the shader read layout. */
     boolean ready;
     /** True once the texture waits to be destroyed, so queued uploads to it are dropped. */
     boolean retired;
@@ -79,12 +79,6 @@ final class Texture {
     }
 
     /**
-     * Returns a value that differs between textures, and changes when the {@link #version} does, for draws to tell
-     * whether the pixels they sample changed since the last frame.
-     *
-     * @return the stamp
-     */
-    /**
      * Returns the descriptor set that samples this texture with nearest or linear filtering. The texture's own set
      * samples it the way it was made; the linear one is made the first time it is asked for.
      */
@@ -98,6 +92,12 @@ final class Texture {
         return this.linearSet;
     }
 
+    /**
+     * Returns a value that differs between textures, and changes when the {@link #version} does, for draws to tell
+     * whether the pixels they sample changed since the last frame.
+     *
+     * @return the stamp
+     */
     long stamp() {
         return this.id * 0x9E3779B97F4A7C15L + this.version;
     }

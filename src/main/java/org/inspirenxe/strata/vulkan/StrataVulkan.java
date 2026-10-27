@@ -200,6 +200,13 @@ public final class StrataVulkan implements AutoCloseable {
      * application's. Without an image, a backdrop draws its tint alone. Close the image only after giving the view
      * another or {@code null}.
      *
+     * <p>The blur reads the image as its {@link ImageEncoding} says, then brings the result into the space the target
+     * blends in, so the glass is as bright as the scene under it. A scene tone-mapped into a {@code _SRGB} image is
+     * {@link ImageEncoding#LINEAR}, since the device decodes it as it samples; make it with
+     * {@link VulkanRenderer#image(long, ImageEncoding, float, float)} or the form that also takes a sampler, or the
+     * glass comes out too dark on an sRGB target. The forms without an encoding take {@link ImageEncoding#ENCODED},
+     * which suits a {@code _UNORM} image holding sRGB bytes.</p>
+     *
      * @param backdrop an image this view's renderer made with {@link VulkanRenderer#image}, or {@code null} for none
      */
     public void setBackdrop(final VulkanImage backdrop) {

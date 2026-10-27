@@ -24,6 +24,8 @@ import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SRGB;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 
 /**
  * Frosted glass over an application's backdrop image, drawn on the device.
@@ -40,6 +42,7 @@ class VulkanBackdropTest {
             renderer.close();
             renderer = null;
         }
+        ImageEncodingTest.closeRenderers();
     }
 
     /**
@@ -148,6 +151,43 @@ class VulkanBackdropTest {
         assertEquals(0xFF, glass >>> 24);
         image.close();
         backdrop.close();
+    }
+
+    /**
+     * Blurs a grey image of the given format behind clear glass on an sRGB target, and returns the pixel at the
+     * glass's center as stored in the target.
+     */
+    private int glassOver(final int imageFormat, final ImageEncoding encoding) {
+        final TestDevice device = TestDevice.get();
+        final VulkanRenderer srgb = ImageEncodingTest.renderer(VK_FORMAT_R8G8B8A8_SRGB);
+        final int size = ImageEncodingTest.SIZE;
+        final Texture texture = ImageEncodingTest.grey(srgb, imageFormat);
+        final VulkanImage backdrop = srgb.image(texture.view, encoding, size, size);
+        final OffscreenImage image = new OffscreenImage(device, srgb, size, size, VK_FORMAT_R8G8B8A8_SRGB);
+        final FrameStream frames = srgb.openStream();
+        final VulkanCanvas canvas = frames.begin(0, 0, size, size, 1f);
+        canvas.configure(null, null, null);
+        canvas.setBackdrop(backdrop);
+        canvas.backdrop(new Rect(0, 0, size, size), 0f, 8f, 0x00000000);
+        image.render(frames::end);
+        final int center = image.argb(size / 2, size / 2);
+        frames.close();
+        backdrop.close();
+        device.idle();
+        image.close();
+        texture.destroy(srgb);
+        return center;
+    }
+
+    @Test
+    void glassIsAsBrightAsTheSceneOfEitherEncoding() {
+        ImageEncodingTest.assertChannels(0x80, this.glassOver(VK_FORMAT_R8G8B8A8_UNORM, ImageEncoding.ENCODED),
+                "over a _UNORM image of sRGB bytes");
+        ImageEncodingTest.assertChannels(0x80, this.glassOver(VK_FORMAT_R8G8B8A8_SRGB, ImageEncoding.LINEAR),
+                "over a _SRGB image");
+        // Taken as encoded, the _SRGB image's samples are decoded a second time
+        ImageEncodingTest.assertChannels(ImageEncodingTest.TWICE_DECODED,
+                this.glassOver(VK_FORMAT_R8G8B8A8_SRGB, ImageEncoding.ENCODED), "over a _SRGB image taken as encoded");
     }
 
     @Test

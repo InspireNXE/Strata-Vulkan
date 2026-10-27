@@ -87,6 +87,15 @@ final class OffscreenImage implements AutoCloseable {
     private final int[] pixels;
 
     OffscreenImage(final Submitter submitter, final VulkanRenderer renderer, final int width, final int height) {
+        this(submitter, renderer, width, height, OffscreenImage.FORMAT);
+    }
+
+    /**
+     * Makes an image of another 8-bit RGBA format, such as {@code VK_FORMAT_R8G8B8A8_SRGB}, for a renderer made for a
+     * target of that format. Its pixels read back as they are stored.
+     */
+    OffscreenImage(final Submitter submitter, final VulkanRenderer renderer, final int width, final int height,
+                   final int format) {
         this.submitter = submitter;
         this.allocator = renderer.allocator();
         this.width = width;
@@ -96,7 +105,7 @@ final class OffscreenImage implements AutoCloseable {
             final VkImageCreateInfo info = VkImageCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
                     .imageType(VK_IMAGE_TYPE_2D)
-                    .format(FORMAT)
+                    .format(format)
                     .mipLevels(1)
                     .arrayLayers(1)
                     .samples(VK_SAMPLE_COUNT_1_BIT)
@@ -116,7 +125,7 @@ final class OffscreenImage implements AutoCloseable {
                     .sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO)
                     .image(this.image)
                     .viewType(VK_IMAGE_VIEW_TYPE_2D)
-                    .format(FORMAT);
+                    .format(format);
             viewInfo.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
             final LongBuffer view = stack.mallocLong(1);
             Vk.check(vkCreateImageView(this.submitter.device(), viewInfo, null, view), "create an offscreen image view");

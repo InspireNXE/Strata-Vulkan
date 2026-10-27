@@ -14,6 +14,9 @@ const uint MASK = 8u;
 const uint BACKDROP = 9u;
 // Drawn with hard edges: coverage is all or nothing
 const uint HARD = 0x100u;
+// The texture's samples are linear, as from an application's _SRGB image; without it they are sRGB-encoded, as from
+// the _UNORM textures Strata makes
+const uint LINEAR_SAMPLES = 0x200u;
 
 layout(push_constant) uniform Frame {
     vec2 viewport;
@@ -40,6 +43,25 @@ const float PI = 3.14159265358979;
 
 vec3 toLinear(vec3 c) {
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), greaterThan(c, vec3(0.04045)));
+}
+
+vec3 toSrgb(vec3 c) {
+    c = max(c, vec3(0.0));
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, greaterThan(c, vec3(0.0031308)));
+}
+
+// A texel in the space colors blend in: linear when the target encodes to sRGB (bit 0 of the flags), encoded
+// otherwise. Each conversion happens once, from what the sampler returned.
+vec3 blendSpace(vec3 c) {
+    bool linearTarget = (frame.flags & 1u) != 0u;
+    bool linearSamples = (mode & LINEAR_SAMPLES) != 0u;
+    if (linearTarget && !linearSamples) {
+        return toLinear(c);
+    }
+    if (!linearTarget && linearSamples) {
+        return toSrgb(c);
+    }
+    return c;
 }
 
 float roundBox(vec2 p, vec2 extent, float radius) {
@@ -138,10 +160,7 @@ void main() {
     float cover = 1.0;
     if (kind == TEXTURE) {
         vec4 texel = texture(image, uv);
-        if ((frame.flags & 1u) != 0u) {
-            texel.rgb = toLinear(texel.rgb);
-        }
-        c *= texel;
+        c *= vec4(blendSpace(texel.rgb), texel.a);
     } else if (kind == GLYPH) {
         cover = texture(image, uv).r;
     } else if (kind == ROUND_RECT) {
@@ -159,11 +178,8 @@ void main() {
     } else if (kind == MASK) {
         cover = maskCoverage();
     } else if (kind == BACKDROP) {
-        vec3 blurred = backdrop(params.w);
-        if ((frame.flags & 1u) != 0u) {
-            blurred = toLinear(blurred);
-        }
-        c = vec4(blurred, c.a);
+        // Blurred as sampled, then converted, as the application's image would be if drawn
+        c = vec4(blendSpace(backdrop(params.w)), c.a);
         cover = roundBoxCoverage(uv, params.xy, params.z);
     }
     if (clipRadius >= 0.0) {

@@ -56,6 +56,9 @@ import java.util.function.Predicate;
  *     <li>A backdrop blurs the image {@link StrataVulkan#setBackdrop} gave the view, sampled where the rectangle sits
  *     in the view, with 169 taps of a Gaussian, then fills the tint over it, both cut to the rounded corners. Without
  *     an image it draws the tint alone.</li>
+ *     <li>Texels are brought into the space the target blends in: linear on an sRGB target, encoded otherwise.
+ *     Strata's own textures hold sRGB bytes in {@code _UNORM} formats; an application's image says what it holds
+ *     with its {@link ImageEncoding}.</li>
  *     <li>Opacity multiplies into every draw's alpha. Layers need nothing: draws keep their order.</li>
  * </ul>
  */
@@ -175,7 +178,7 @@ final class VulkanCanvas implements Canvas {
             final float qy1 = Math.min((float) Math.ceil(cy + halfHeight + 1f), this.clipY1);
             if (qx1 > qx0 && qy1 > qy0) {
                 final float r = Math.max(0f, Math.min(radius * this.scale, Math.min(halfWidth, halfHeight)));
-                final int mode = DrawList.BACKDROP | (this.smooth ? 0 : DrawList.HARD);
+                final int mode = DrawList.BACKDROP | image.modeBits() | (this.smooth ? 0 : DrawList.HARD);
                 this.draws.texture(image.set(), DrawList.LIVE);
                 this.draws.quad(qx0, qy0, qx1, qy1, qx0 - cx, qy0 - cy, qx1 - cx, qy1 - cy,
                         DrawList.rgba(0xFFFFFFFF, this.opacity), mode, halfWidth, halfHeight, r, blur * this.scale);
@@ -525,8 +528,8 @@ final class VulkanCanvas implements Canvas {
     public void visual(final Visual visual, final Rect rect, final int tint) {
         if (visual instanceof final VulkanImage image && image.belongsTo(this.renderer)) {
             // The application draws into its image whenever it likes
-            this.texture(image.set(), DrawList.LIVE, rect.x(), rect.y(), rect.x() + rect.width(),
-                    rect.y() + rect.height(), 0f, 0f, 1f, 1f, tint);
+            this.texture(image.set(), DrawList.LIVE, DrawList.TEXTURE | image.modeBits(), rect.x(), rect.y(),
+                    rect.x() + rect.width(), rect.y() + rect.height(), 0f, 0f, 1f, 1f, tint);
             return;
         }
         if (visual instanceof final VulkanVisuals.PixelVisual pixels) {
@@ -754,16 +757,17 @@ final class VulkanCanvas implements Canvas {
     private void texture(final Texture texture, final float left, final float top, final float right,
                          final float bottom, final float u0, final float v0, final float u1, final float v1,
                          final int tint) {
-        this.texture(texture.set(this.renderer, this.linear), texture.stamp(), left, top, right, bottom, u0, v0, u1,
-                v1, tint);
+        this.texture(texture.set(this.renderer, this.linear), texture.stamp(), DrawList.TEXTURE, left, top, right,
+                bottom, u0, v0, u1, v1, tint);
     }
 
     /**
-     * Draws part of a texture over a rectangle in UI units, its edges snapped to the pixel grid.
+     * Draws part of a texture over a rectangle in UI units, its edges snapped to the pixel grid, with the given mode:
+     * {@code TEXTURE} and any bits that say how to read the texture.
      */
-    private void texture(final long set, final long stamp, final float left, final float top, final float right,
-                         final float bottom, final float u0, final float v0, final float u1, final float v1,
-                         final int tint) {
+    private void texture(final long set, final long stamp, final int mode, final float left, final float top,
+                         final float right, final float bottom, final float u0, final float v0, final float u1,
+                         final float v1, final int tint) {
         if ((tint >>> 24) == 0 || this.clipEmpty()) {
             return;
         }
@@ -775,8 +779,7 @@ final class VulkanCanvas implements Canvas {
             return;
         }
         this.draws.texture(set, stamp);
-        this.draws.quad(x0, y0, x1, y1, u0, v0, u1, v1, DrawList.rgba(tint, this.opacity), DrawList.TEXTURE, 0f, 0f,
-                0f, 0f);
+        this.draws.quad(x0, y0, x1, y1, u0, v0, u1, v1, DrawList.rgba(tint, this.opacity), mode, 0f, 0f, 0f, 0f);
     }
 
     // ------------------------------------------------------------------

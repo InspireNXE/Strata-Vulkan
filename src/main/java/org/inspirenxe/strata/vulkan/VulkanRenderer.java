@@ -293,7 +293,11 @@ public final class VulkanRenderer implements AutoCloseable {
 
     /**
      * Makes a live visual of an image the application owns, which screens show with an {@code Image} control or a
-     * painter's {@code visual} call. Strata samples it with linear filtering, clamped at the edges.
+     * painter's {@code visual} call. Strata samples it with linear filtering, clamped at the edges, and takes what
+     * it reads to be {@link ImageEncoding#ENCODED}, which suits a {@code _UNORM} view holding sRGB bytes. A
+     * {@code _SRGB} view or a floating-point one gives back linear values, which then show too dark on an sRGB target
+     * and too light on any other; name the encoding with {@link #image(long, ImageEncoding, float, float)} for
+     * those.
      *
      * @param imageView a view of the image; the image must be in {@code VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
      *                  whenever a frame that draws it executes
@@ -303,11 +307,30 @@ public final class VulkanRenderer implements AutoCloseable {
      * @throws IllegalArgumentException if a size is negative or not finite
      */
     public VulkanImage image(final long imageView, final float width, final float height) {
-        return this.image(imageView, this.linearSampler, width, height);
+        return this.image(imageView, this.linearSampler, ImageEncoding.ENCODED, width, height);
     }
 
     /**
-     * Makes a live visual of an image the application owns, sampled with the application's sampler.
+     * Makes a live visual of an image the application owns, sampled with linear filtering, clamped at the edges, and
+     * converted from the given encoding to the space the target blends in. {@code ImageEncoding.forFormat} gives the
+     * usual encoding of a view's format.
+     *
+     * @param imageView a view of the image; the image must be in {@code VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
+     *                  whenever a frame that draws it executes
+     * @param encoding what the shader reads when it samples the view
+     * @param width the visual's natural width in UI units
+     * @param height the visual's natural height in UI units
+     * @return the visual; close it when no longer needed
+     * @throws IllegalArgumentException if a size is negative or not finite
+     */
+    public VulkanImage image(final long imageView, final ImageEncoding encoding, final float width,
+                             final float height) {
+        return this.image(imageView, this.linearSampler, encoding, width, height);
+    }
+
+    /**
+     * Makes a live visual of an image the application owns, sampled with the application's sampler. What Strata
+     * reads is taken to be {@link ImageEncoding#ENCODED}, as in {@link #image(long, float, float)}.
      *
      * @param imageView a view of the image; the image must be in {@code VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
      *                  whenever a frame that draws it executes
@@ -318,8 +341,27 @@ public final class VulkanRenderer implements AutoCloseable {
      * @throws IllegalArgumentException if a size is negative or not finite
      */
     public VulkanImage image(final long imageView, final long sampler, final float width, final float height) {
+        return this.image(imageView, sampler, ImageEncoding.ENCODED, width, height);
+    }
+
+    /**
+     * Makes a live visual of an image the application owns, sampled with the application's sampler and converted
+     * from the given encoding to the space the target blends in.
+     *
+     * @param imageView a view of the image; the image must be in {@code VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
+     *                  whenever a frame that draws it executes
+     * @param sampler the sampler, which must outlive the visual
+     * @param encoding what the shader reads when it samples the view
+     * @param width the visual's natural width in UI units
+     * @param height the visual's natural height in UI units
+     * @return the visual; close it when no longer needed
+     * @throws IllegalArgumentException if a size is negative or not finite
+     */
+    public VulkanImage image(final long imageView, final long sampler, final ImageEncoding encoding,
+                             final float width, final float height) {
         this.checkOpen();
-        return new VulkanImage(this, this.descriptors.image(this.imageLayout, imageView, sampler), width, height);
+        return new VulkanImage(this, this.descriptors.image(this.imageLayout, imageView, sampler), encoding, width,
+                height);
     }
 
     /**
