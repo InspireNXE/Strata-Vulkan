@@ -59,6 +59,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code build/snapshots} for a person to look at.
  */
 class StrataVulkanTest {
+    private final long[] clock = {1L};
     private static final int WIDTH = 720;
     private static final int HEIGHT = 480;
     private static final float SCALE = 2f;
@@ -73,7 +74,8 @@ class StrataVulkanTest {
         this.device = TestDevice.get();
         this.renderer = new VulkanRenderer(this.device.logical, this.device.queue, this.device.queueFamily,
                 OffscreenImage.TARGET, 2);
-        this.strata = new StrataVulkan(new VulkanPlatform(TestFonts.metrics()), this.renderer, Themes.flat(), SCALE);
+        this.strata = new StrataVulkan(VulkanPlatform.builder(TestFonts.metrics()).clock(() -> this.clock[0]).build(), this.renderer,
+                Themes.flat(), SCALE);
         this.strata.setBounds(0, 0, WIDTH, HEIGHT);
         this.image = new OffscreenImage(this.device, this.renderer, WIDTH, HEIGHT);
     }
@@ -249,6 +251,7 @@ class StrataVulkanTest {
     }
 
     private void render() {
+        this.clock[0] += this.strata.screens().frameIntervalNanos();
         // The Swing panel's background, which the flat theme is made for
         this.image.render(0xFF1E1F22, this.strata::render);
     }

@@ -84,6 +84,14 @@ class RetainedFrameTest {
         this.image.render(BACKGROUND, this.strata::render);
     }
 
+    /**
+     * Renders a frame a whole frame interval after the last, when the frame rate allows the screens to draw again.
+     */
+    private void renderLater() {
+        this.nanos[0] += this.strata.screens().frameIntervalNanos();
+        this.image.render(BACKGROUND, this.strata::render);
+    }
+
     private long built() {
         return this.strata.stream().committed();
     }
@@ -117,6 +125,8 @@ class RetainedFrameTest {
         final long built = this.built();
         label[0].setText(Text.of("Ben"));
         this.render();
+        assertEquals(1, this.paints, "a change inside the frame interval waits for it");
+        this.renderLater();
         assertEquals(2, this.paints);
         assertEquals(built + 1, this.built());
         assertFalse(Arrays.equals(before, this.image.pixels()), "the new text shows");
@@ -143,12 +153,16 @@ class RetainedFrameTest {
     }
 
     @Test
-    void somethingMovingBuildsEveryFrameWhateverTheRate() {
+    void somethingMovingBuildsAtTheFrameRateNotTheApplicationsRate() {
         this.strata.screens().push(ui -> ui.absolutePanel().add(new Spinner(ui), 10, 10));
         this.render();
         final long built = this.built();
         for (int frame = 0; frame < 3; frame++) {
             this.render();
+        }
+        assertEquals(built, this.built(), "frames inside the interval repeat the last one");
+        for (int frame = 0; frame < 3; frame++) {
+            this.renderLater();
         }
         assertEquals(built + 3, this.built());
     }

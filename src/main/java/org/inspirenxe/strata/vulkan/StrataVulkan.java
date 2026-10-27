@@ -57,7 +57,8 @@ import java.util.function.Predicate;
  *     <li>{@link #render} lays out and draws the screens, submits the uploads they need on the renderer's queue, and
  *     records the draws into the command buffer. Strata leaves the pipeline, viewport, scissor, vertex buffer,
  *     descriptor sets and push constants bound as it last set them, so set your own again after it.</li>
- *     <li>A game renders every frame anyway. An application that renders only when something changes renders when
+ *     <li>A game renders every frame anyway, and the view draws its screens at most {@code screens().frameRate()}
+ *     times a second, repeating the last frame in between. An application that renders only when something changes renders when
  *     {@code screens().needsFrame()} is true, or when the platform's clock reaches {@link #nextFrameNanos()}, and can
  *     be told when the first becomes true with {@code screens().setFrameRequester}. Either way it renders no sooner
  *     than {@code screens().frameIntervalNanos()} after its last render began, so the screens are drawn at most
@@ -100,6 +101,8 @@ public final class StrataVulkan implements AutoCloseable {
     private int width;
     private int height;
     private long prepared;
+    private long drawnNanos;
+    private boolean drawnOnce;
     private boolean closed;
 
     /**
@@ -359,7 +362,10 @@ public final class StrataVulkan implements AutoCloseable {
      *
      * <p>When the screens would draw what they drew for the last frame, and nothing the view drew with changed, the
      * view records the last frame's draws again without drawing the screens, copying anything or submitting
-     * uploads.</p>
+     * uploads. The screens are also drawn at most {@code screens().frameRate()} times a second, 30 unless set: until
+     * {@code screens().frameIntervalNanos()} has passed since the last frame they drew, the view records that frame
+     * again, so something that changes or moves every frame is drawn at the frame rate, not at the application's.
+     * New bounds, a new scale or new sprites are drawn at once.</p>
      *
      * @param commands the command buffer
      * @throws IllegalStateException if the view or its renderer is closed, or Vulkan fails
@@ -368,7 +374,8 @@ public final class StrataVulkan implements AutoCloseable {
         this.checkOpen();
         this.runDueTasks();
         this.prepared++;
-        if (this.repeats()) {
+        final long now = this.platform.clock().nanoTime();
+        if (this.repeats() || this.paced(now)) {
             this.frames.repeat(commands);
             this.showCursorAndTitle(this.frames.canvas());
             return;
@@ -381,6 +388,8 @@ public final class StrataVulkan implements AutoCloseable {
         } finally {
             this.frames.end(commands, drawn);
         }
+        this.drawnNanos = now;
+        this.drawnOnce = true;
         this.drawnSprites = this.sprites.version();
         this.showCursorAndTitle(canvas);
     }
@@ -457,6 +466,12 @@ public final class StrataVulkan implements AutoCloseable {
      * Returns whether the last frame can be drawn again in place of drawing the screens: they would draw the same,
      * and neither the view's bounds, scale, sprites or window nor anything the frame sampled changed since.
      */
+    private boolean paced(final long now) {
+        return this.drawnOnce && now - this.drawnNanos < this.screens.frameIntervalNanos()
+                && this.drawnSprites == this.sprites.version()
+                && this.frames.canRepeat(this.x, this.y, this.width, this.height, this.scale);
+    }
+
     private boolean repeats() {
         return this.drawnSprites == this.sprites.version()
                 && this.frames.canRepeat(this.x, this.y, this.width, this.height, this.scale)
