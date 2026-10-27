@@ -50,6 +50,7 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -110,7 +111,9 @@ final class OffscreenImage implements AutoCloseable {
                     .arrayLayers(1)
                     .samples(VK_SAMPLE_COUNT_1_BIT)
                     .tiling(VK_IMAGE_TILING_OPTIMAL)
-                    .usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                    // Sampled too, so tests can show one as an application's image
+                    .usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                            | VK_IMAGE_USAGE_SAMPLED_BIT)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
                     .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
             info.extent().set(width, height, 1);
