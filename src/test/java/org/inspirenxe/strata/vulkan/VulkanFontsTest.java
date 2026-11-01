@@ -22,6 +22,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,6 +39,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  */
 class VulkanFontsTest {
     private static final FontId TITLE = FontId.of("app", "title");
+    private static final List<String> FONT_FILES = List.of("C:/Windows/Fonts/segoeui.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf");
 
     private FreeTypeFont text;
     private FreeTypeFont mono;
@@ -115,9 +122,47 @@ class VulkanFontsTest {
     }
 
     @Test
+    void aPixelFontSnapsToWholeDevicePixelsPerPixel() throws IOException {
+        try (FreeTypeFont pixel = FreeTypeFont.builder(16f).regular(VulkanFontsTest.fontFile()).pixelsPerEm(8).build()) {
+            final VulkanTextMetrics metrics = new VulkanTextMetrics(pixel);
+            final TextSpan item = new TextSpan("Strata", TextStyle.DEFAULT.withSize(24f));
+            final float base = metrics.width(new TextSpan("Strata", TextStyle.DEFAULT));
+            assertEquals(base * 1.5f, metrics.width(item), 0.01f, "until a density is given, sizes are not snapped");
+
+            final long before = metrics.version();
+            metrics.setPixelsPerUnit(1.5f);
+            assertNotEquals(before, metrics.version());
+            // 24 units at 1.5 pixels per unit is 4.5 device pixels per font pixel, which rounds to 5
+            assertEquals(base * 5f / 3f, metrics.width(item), 0.01f);
+            assertEquals(metrics.lineHeight(TextStyle.DEFAULT) * 5f / 3f, metrics.lineHeight(item.style()), 0.01f);
+            assertEquals(base, metrics.width(new TextSpan("Strata", TextStyle.DEFAULT)), 0.01f);
+            // Never below one device pixel per font pixel
+            assertEquals(base / 3f, metrics.width(new TextSpan("Strata", TextStyle.DEFAULT.withSize(1f))), 0.01f);
+
+            final long snapped = metrics.version();
+            metrics.setPixelsPerUnit(1.5f);
+            assertEquals(snapped, metrics.version(), "the same density changes nothing");
+            metrics.setPixelsPerUnit(2f);
+            assertEquals(base * 1.5f, metrics.width(item), 0.01f, "24 units at 2 pixels per unit is already whole");
+        }
+    }
+
+    @Test
+    void aFontWithoutAPixelGridIsNotSnapped() {
+        this.metrics.setPixelsPerUnit(1.5f);
+        assertEquals(this.width(TextStyle.DEFAULT) * 2f, this.width(TextStyle.DEFAULT.withSize(18f)), 0.01f);
+    }
+
+    @Test
     void aBitmapFontsSizeIsItsLineHeight() {
         try (BitmapFont font = BitmapFont.builder(9f, 7f).fallback(this.text).build()) {
             assertEquals(9f, font.size());
         }
+    }
+
+    private static Path fontFile() {
+        final Optional<Path> found = FONT_FILES.stream().map(Path::of).filter(Files::isRegularFile).findFirst();
+        assumeTrue(found.isPresent(), "No font file found");
+        return found.get();
     }
 }
