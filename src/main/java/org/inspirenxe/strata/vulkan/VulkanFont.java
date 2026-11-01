@@ -38,6 +38,16 @@ public abstract sealed class VulkanFont implements AutoCloseable permits FreeTyp
     public abstract float size();
 
     /**
+     * Returns how many pixels of the grid a pixel font is drawn on fit its em square. The metrics snap text of such a
+     * font to whole device pixels per pixel.
+     *
+     * @return the pixels per em, or 0 for a font not drawn on a pixel grid
+     */
+    public int pixelsPerEm() {
+        return 0;
+    }
+
+    /**
      * Measures how wide a span draws at the font's own size. The style's bold and italic count; its color, lines and
      * size do not.
      *

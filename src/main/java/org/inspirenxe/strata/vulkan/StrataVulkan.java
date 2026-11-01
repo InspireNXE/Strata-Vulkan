@@ -140,6 +140,7 @@ public final class StrataVulkan implements AutoCloseable {
         this.screens = StrataCore.createScreenStack(platform, theme);
         this.frames = renderer.openStream();
         this.scale = scale;
+        this.textMetrics.setPixelsPerUnit(scale);
         this.screens.setPixelsPerUnit(scale);
         this.giveSpriteSizes();
     }
@@ -267,6 +268,7 @@ public final class StrataVulkan implements AutoCloseable {
         if (scale != this.scale) {
             this.scale = scale;
             this.frames.invalidate();
+            this.textMetrics.setPixelsPerUnit(scale);
             this.screens.setPixelsPerUnit(scale);
             this.resizeScreens();
         }

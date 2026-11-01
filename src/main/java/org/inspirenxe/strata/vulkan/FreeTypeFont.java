@@ -71,6 +71,10 @@ import static org.lwjgl.util.freetype.FreeType.FT_Set_Char_Size;
  * Widths come from the fonts' unhinted advances and kerning tables, so text measures the same at every scale; glyphs
  * are drawn with light hinting, which keeps their widths and sharpens their horizontal strokes.</p>
  *
+ * <p>A pixel font, drawn on a grid of square pixels, can say how many fit its em square with
+ * {@link Builder#pixelsPerEm}. Its text then measures and draws at the nearest size where each of those pixels covers
+ * a whole number of device pixels, so its edges stay sharp at every scale.</p>
+ *
  * <p>Text shaping is not done: each character is drawn with its own glyph, so ligatures and the joining of Arabic
  * letters do not appear, and kerning comes only from the fonts' {@code kern} tables.</p>
  *
@@ -85,6 +89,7 @@ public final class FreeTypeFont extends VulkanFont {
     private static final int KEPT_SIZES = 4;
 
     private final float size;
+    private final int pixelsPerEm;
     private final long library;
     // Indexed by REGULAR, BOLD, ITALIC and BOLD_ITALIC; null where the family has no face
     private final Face[] styles;
@@ -94,9 +99,10 @@ public final class FreeTypeFont extends VulkanFont {
     private final LongMap<Glyph> glyphs;
     private boolean closed;
 
-    private FreeTypeFont(final float size, final long library, final Face[] styles, final List<Face> fallbacks,
-                       final List<Face> faces) {
+    private FreeTypeFont(final float size, final int pixelsPerEm, final long library, final Face[] styles,
+                       final List<Face> fallbacks, final List<Face> faces) {
         this.size = size;
+        this.pixelsPerEm = pixelsPerEm;
         this.library = library;
         this.styles = styles;
         this.fallbacks = fallbacks;
@@ -160,6 +166,16 @@ public final class FreeTypeFont extends VulkanFont {
     @Override
     public float size() {
         return this.size;
+    }
+
+    /**
+     * Returns how many of a pixel font's pixels fit its em square, as {@link Builder#pixelsPerEm} set it.
+     *
+     * @return the pixels per em, or 0 for a font not drawn on a pixel grid
+     */
+    @Override
+    public int pixelsPerEm() {
+        return this.pixelsPerEm;
     }
 
     /**
@@ -489,6 +505,7 @@ public final class FreeTypeFont extends VulkanFont {
     public static final class Builder {
         private final float size;
         private final Source[] styles = new Source[4];
+        private int pixelsPerEm;
         private final List<Source> collections = new ArrayList<>();
         private final List<Source> fallbacks = new ArrayList<>();
 
@@ -616,6 +633,23 @@ public final class FreeTypeFont extends VulkanFont {
         }
 
         /**
+         * Says the family is a pixel font: its glyphs are drawn on a grid of square pixels, this many to the em
+         * square. Its text measures and draws at the nearest size where each pixel covers a whole number of device
+         * pixels, and never smaller than one device pixel per pixel. The default, 0, draws at the size asked for.
+         *
+         * @param pixelsPerEm the grid's pixels per em, or 0 for a font not drawn on a pixel grid
+         * @return this builder
+         * @throws IllegalArgumentException if {@code pixelsPerEm} is negative
+         */
+        public Builder pixelsPerEm(final int pixelsPerEm) {
+            if (pixelsPerEm < 0) {
+                throw new IllegalArgumentException("Pixels per em must be 0 or more: " + pixelsPerEm);
+            }
+            this.pixelsPerEm = pixelsPerEm;
+            return this;
+        }
+
+        /**
          * Reads the fonts.
          *
          * @return the font
@@ -655,7 +689,7 @@ public final class FreeTypeFont extends VulkanFont {
                 for (final Source fallback : this.fallbacks) {
                     fallbacks.add(Builder.open(library, fallback, all));
                 }
-                return new FreeTypeFont(this.size, library, faces, List.copyOf(fallbacks), List.copyOf(all));
+                return new FreeTypeFont(this.size, this.pixelsPerEm, library, faces, List.copyOf(fallbacks), List.copyOf(all));
             } catch (final IOException | RuntimeException e) {
                 for (final Face face : all) {
                     FT_Done_Face(face.face);

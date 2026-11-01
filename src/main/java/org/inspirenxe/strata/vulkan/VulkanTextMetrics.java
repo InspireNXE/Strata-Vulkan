@@ -35,6 +35,11 @@ import java.util.Optional;
  * own size, and a size of 0 is the {@linkplain #defaultSize() default size}, the ordinary font's. Widths, line heights
  * and ascents scale alike, and the canvas draws the glyphs at the scaled size rather than stretching them.</p>
  *
+ * <p>Text of a pixel font, one with {@linkplain VulkanFont#pixelsPerEm() pixels per em}, measures and draws at the
+ * nearest size where each of its pixels covers a whole number of device pixels, at the density
+ * {@link #setPixelsPerUnit} gives. A {@link StrataVulkan} view gives its own; views that share metrics should share
+ * a scale, or a pixel font snaps to the density of the view that set it last.</p>
+ *
  * <p>Registering, replacing or removing a family changes {@link #version()}, so open screens lay out again. The
  * metrics never close a registered font: close it after removing it, or after the views that draw with it.</p>
  *
@@ -47,6 +52,7 @@ public final class VulkanTextMetrics implements TextMetrics {
     private final VulkanFont text;
     private final VulkanFont monospace;
     private final Map<FontId, VulkanFont> families = new HashMap<>();
+    private float pixelsPerUnit;
     private long version;
 
     /**
@@ -83,6 +89,23 @@ public final class VulkanTextMetrics implements TextMetrics {
                 "No system font found; give VulkanTextMetrics a font file with FreeTypeFont.load"));
         return FreeTypeFont.systemMonospace(DEFAULT_SIZE).<VulkanTextMetrics>map(mono -> new VulkanTextMetrics(text,
                 mono)).orElseGet(() -> new VulkanTextMetrics(text));
+    }
+
+    /**
+     * Sets the device pixels per UI unit that text of a pixel font snaps to. Until it is set, every font draws at
+     * the size asked for. A change changes {@link #version()}, so open screens lay out again.
+     *
+     * @param pixelsPerUnit device pixels per UI unit
+     * @throws IllegalArgumentException if {@code pixelsPerUnit} is not finite and greater than 0
+     */
+    public void setPixelsPerUnit(final float pixelsPerUnit) {
+        if (!(pixelsPerUnit > 0f) || Float.isInfinite(pixelsPerUnit)) {
+            throw new IllegalArgumentException("Pixels per unit must be finite and greater than 0: " + pixelsPerUnit);
+        }
+        if (pixelsPerUnit != this.pixelsPerUnit) {
+            this.pixelsPerUnit = pixelsPerUnit;
+            this.version++;
+        }
     }
 
     /**
@@ -154,7 +177,7 @@ public final class VulkanTextMetrics implements TextMetrics {
     }
 
     /**
-     * Returns how much larger than its font's own size a style draws.
+     * Returns how much larger than its font's own size a style draws, after a pixel font's snap.
      *
      * @param style the style
      * @param font the font {@link #font} chose for it
@@ -162,7 +185,12 @@ public final class VulkanTextMetrics implements TextMetrics {
      */
     float scale(final TextStyle style, final VulkanFont font) {
         final float size = style.size() > 0f ? style.size() : this.text.size();
-        return size / font.size();
+        final int grid = font.pixelsPerEm();
+        if (grid == 0 || this.pixelsPerUnit == 0f) {
+            return size / font.size();
+        }
+        final int pixels = Math.max(1, Math.round(size * this.pixelsPerUnit / grid));
+        return pixels * grid / this.pixelsPerUnit / font.size();
     }
 
     /**
