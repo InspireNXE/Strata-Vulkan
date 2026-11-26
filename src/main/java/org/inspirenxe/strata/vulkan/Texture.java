@@ -66,6 +66,13 @@ final class Texture {
     long version;
     private final long id;
 
+    /**
+     * Returns an id no other texture or atlas has, for stamps.
+     */
+    static long nextId() {
+        return IDS.incrementAndGet();
+    }
+
     private Texture(final long image, final long allocation, final long view, final long set, final int width,
                     final int height, final int bytesPerPixel) {
         this.image = image;
@@ -75,7 +82,7 @@ final class Texture {
         this.width = width;
         this.height = height;
         this.bytesPerPixel = bytesPerPixel;
-        this.id = IDS.incrementAndGet();
+        this.id = Texture.nextId();
     }
 
     /**

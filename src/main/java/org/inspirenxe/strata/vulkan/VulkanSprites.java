@@ -39,6 +39,10 @@ import static org.lwjgl.stb.STBImage.stbi_load_from_memory;
  * <p>Where one UI unit covers 2 device pixels or more the canvas draws the source's image of density 2 if it has one,
  * from 1.5 its image of density 1.5, and otherwise the plain image, each at the same size in UI units.</p>
  *
+ * <p>A sprite can instead live in an application's atlas, a {@link VulkanAtlas} made for this set by
+ * {@link VulkanRenderer#atlas}: it then draws from the atlas, at the size of its region, and the source is not
+ * asked for it.</p>
+ *
  * <p>Use it on the UI thread only.</p>
  */
 public final class VulkanSprites {
@@ -47,6 +51,7 @@ public final class VulkanSprites {
     private final SpriteSource source;
     private final Map<SpriteId, Optional<SpriteImage>> cache;
     private final Map<DenseKey, Optional<SpriteImage>> dense;
+    private final Map<SpriteId, AtlasRegion> regions;
     private long version;
 
     /**
@@ -77,33 +82,38 @@ public final class VulkanSprites {
         this.source = Objects.requireNonNull(source, "source");
         this.cache = new HashMap<>();
         this.dense = new HashMap<>();
+        this.regions = new HashMap<>();
     }
 
     /**
-     * Returns whether the source has an image for a sprite that can be decoded.
+     * Returns whether a sprite has a region in an atlas, or the source has an image for it that can be decoded.
      *
      * @param sprite the sprite
      * @return true if the sprite draws as its image, false if it draws as the placeholder
      */
     public boolean has(final SpriteId sprite) {
-        return this.plain(sprite).isPresent();
+        return this.regions.containsKey(sprite) || this.plain(sprite).isPresent();
     }
 
     /**
-     * Returns a sprite's size in UI units: its plain image's width and height in pixels, one pixel to a unit. Views
-     * give it to their screens, so an image showing a sprite takes the sprite's size. The first call for a sprite
-     * loads its image, as drawing it does.
+     * Returns a sprite's size in UI units: its region's width and height in an atlas, or else its plain image's width
+     * and height in pixels, one pixel to a unit. Views give it to their screens, so an image showing a sprite takes
+     * the sprite's size. The first call for a sprite with no region loads its image, as drawing it does.
      *
      * @param sprite the sprite
-     * @return the size, or empty if the source has no image for the sprite that can be decoded
+     * @return the size, or empty if the sprite has no region and the source has no image for it that can be decoded
      */
     public Optional<Size> size(final SpriteId sprite) {
+        final AtlasRegion region = this.regions.get(sprite);
+        if (region != null) {
+            return Optional.of(new Size(region.width(), region.height()));
+        }
         return this.plain(sprite).map(image -> new Size(image.width(), image.height()));
     }
 
     /**
      * Forgets every loaded image, so each is loaded from the source again when next drawn. Renderers destroy their
-     * textures of the old images once the device is done with them.
+     * textures of the old images once the device is done with them. Regions in atlases stay.
      */
     public void clear() {
         this.cache.clear();
@@ -118,6 +128,39 @@ public final class VulkanSprites {
      */
     public long version() {
         return this.version;
+    }
+
+    /**
+     * Returns the region a sprite has in an atlas.
+     *
+     * @return the region, or {@code null} if it has none
+     */
+    AtlasRegion region(final SpriteId sprite) {
+        return this.regions.get(sprite);
+    }
+
+    /**
+     * Gives a sprite a region, and moves the version on so views size and draw it again.
+     */
+    void putRegion(final SpriteId sprite, final AtlasRegion region) {
+        this.regions.put(sprite, region);
+        this.touch();
+    }
+
+    /**
+     * Forgets the regions of an atlas that is closing, and moves the version on if it had any.
+     */
+    void removeRegions(final VulkanAtlas atlas) {
+        if (this.regions.values().removeIf(region -> region.atlas() == atlas)) {
+            this.touch();
+        }
+    }
+
+    /**
+     * Moves the version on without forgetting any image, for what the sprites draw from outside this set changing.
+     */
+    void touch() {
+        this.version++;
     }
 
     /**
@@ -185,6 +228,26 @@ public final class VulkanSprites {
      * @param density 1 for the plain image
      */
     record SpriteImage(int width, int height, byte[] rgba, float density) {
+    }
+
+    /**
+     * Where a sprite is in an atlas: its size in pixels, and its rectangle in texture coordinates, with v growing
+     * downward as the rows of the image do.
+     */
+    record AtlasRegion(VulkanAtlas atlas, int width, int height, float u0, float v0, float u1, float v1) {
+        /**
+         * Maps a horizontal position across the sprite, 0 to 1, to a texture coordinate of the atlas.
+         */
+        float u(final float t) {
+            return this.u0 + t * (this.u1 - this.u0);
+        }
+
+        /**
+         * Maps a vertical position down the sprite, 0 to 1, to a texture coordinate of the atlas.
+         */
+        float v(final float t) {
+            return this.v0 + t * (this.v1 - this.v0);
+        }
     }
 
     private record DenseKey(SpriteId sprite, float density) {

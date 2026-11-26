@@ -161,8 +161,9 @@ import static org.lwjgl.vulkan.VK13.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_
 
 /**
  * The device resources Strata draws with on one Vulkan device: its pipeline for a {@link VulkanTarget}, the glyph
- * atlas, sprite and pixel buffer textures, samplers and descriptor pools. One renderer serves any number of
- * {@link StrataVulkan} views that draw into passes of the same target.
+ * atlas, sprite and pixel buffer textures, the descriptor sets of the application's images and atlases, samplers and
+ * descriptor pools. One renderer serves any number of {@link StrataVulkan} views that draw into passes of the same
+ * target.
  *
  * <h2>What the application provides</h2>
  * <ul>
@@ -362,6 +363,35 @@ public final class VulkanRenderer implements AutoCloseable {
         this.checkOpen();
         return new VulkanImage(this, this.descriptors.image(this.imageLayout, imageView, sampler), encoding, width,
                 height);
+    }
+
+    /**
+     * Makes an atlas of an image the application owns, for the sprites of one {@link VulkanSprites} to draw from. Give
+     * it a region for each sprite with {@link VulkanAtlas#region}; until then it draws nothing. Strata samples it with
+     * its own nearest and linear samplers, clamped at the edges, level 0 only. {@code encoding} says what the shader
+     * reads, as for {@link #image(long, ImageEncoding, float, float)}: a {@code _UNORM} view holding sRGB bytes is
+     * {@link ImageEncoding#ENCODED} and a {@code _SRGB} one {@link ImageEncoding#LINEAR}.
+     *
+     * @param sprites the sprites whose regions the atlas holds, which the views that draw them use
+     * @param imageView a view of the image, which the application keeps alive while frames that draw the atlas may run
+     * @param encoding what the shader reads from the view
+     * @param width the image's width in pixels
+     * @param height the image's height in pixels
+     * @return the atlas; close it when no longer needed
+     * @throws IllegalArgumentException if a size is not positive
+     * @throws IllegalStateException if the renderer is closed
+     */
+    public VulkanAtlas atlas(final VulkanSprites sprites, final long imageView, final ImageEncoding encoding,
+                             final int width, final int height) {
+        this.checkOpen();
+        Objects.requireNonNull(sprites, "sprites");
+        Objects.requireNonNull(encoding, "encoding");
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("An atlas must be at least 1 pixel each way: " + width + " by "
+                    + height);
+        }
+        return new VulkanAtlas(this, sprites, imageView,
+                this.descriptors.image(this.imageLayout, imageView, this.nearestSampler), encoding, width, height);
     }
 
     /**

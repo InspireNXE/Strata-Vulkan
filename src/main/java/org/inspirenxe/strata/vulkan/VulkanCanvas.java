@@ -303,6 +303,14 @@ final class VulkanCanvas implements Canvas {
     @Override
     public void spriteRegion(final SpriteId sprite, final Rect rect, final float u0, final float v0, final float u1,
                              final float v1, final int tint) {
+        final VulkanSprites.AtlasRegion region = this.region(sprite);
+        if (region != null) {
+            final VulkanAtlas atlas = region.atlas();
+            this.texture(atlas.set(this.linear), atlas.stamp(), DrawList.TEXTURE | atlas.modeBits(), rect.x(),
+                    rect.y(), rect.x() + rect.width(), rect.y() + rect.height(), region.u(u0), region.v(v0),
+                    region.u(u1), region.v(v1), tint);
+            return;
+        }
         final Optional<VulkanSprites.SpriteImage> image = this.image(sprite);
         if (image.isEmpty()) {
             this.fill(rect, MISSING_COLOR);
@@ -314,17 +322,38 @@ final class VulkanCanvas implements Canvas {
 
     @Override
     public void nineSlice(final SpriteId sprite, final Rect rect, final Insets border, final int tint) {
-        final Optional<VulkanSprites.SpriteImage> found = this.image(sprite);
-        if (found.isEmpty()) {
-            this.fill(rect, MISSING_COLOR);
-            return;
+        final VulkanSprites.AtlasRegion region = this.region(sprite);
+        final long set;
+        final long stamp;
+        final int mode;
+        final float density;
+        final int w;
+        final int h;
+        if (region != null) {
+            final VulkanAtlas atlas = region.atlas();
+            set = atlas.set(this.linear);
+            stamp = atlas.stamp();
+            mode = DrawList.TEXTURE | atlas.modeBits();
+            // An atlas has one density, and the border counts its pixels
+            density = 1f;
+            w = region.width();
+            h = region.height();
+        } else {
+            final Optional<VulkanSprites.SpriteImage> found = this.image(sprite);
+            if (found.isEmpty()) {
+                this.fill(rect, MISSING_COLOR);
+                return;
+            }
+            final VulkanSprites.SpriteImage image = found.get();
+            final Texture texture = this.renderer.sprite(this.sprites, image);
+            set = texture.set(this.renderer, this.linear);
+            stamp = texture.stamp();
+            mode = DrawList.TEXTURE;
+            // The border counts the plain image's pixels; a denser image has more of them under each unit
+            density = image.density();
+            w = image.width();
+            h = image.height();
         }
-        final VulkanSprites.SpriteImage image = found.get();
-        final Texture texture = this.renderer.sprite(this.sprites, image);
-        // The border counts the plain image's pixels; a denser image has more of them under each unit
-        final float density = image.density();
-        final int w = image.width();
-        final int h = image.height();
         final int l = VulkanCanvas.clampBorder(border.left() * density, w);
         final int r = VulkanCanvas.clampBorder(border.right() * density, w - l);
         final int t = VulkanCanvas.clampBorder(border.top() * density, h);
@@ -340,13 +369,19 @@ final class VulkanCanvas implements Canvas {
         final float[] dy = {rect.y(), rect.y() + top * vertical, rect.bottom() - bottom * vertical, rect.bottom()};
         final int[] sx = {0, l, w - r, w};
         final int[] sy = {0, t, h - b, h};
+        // A sprite alone in its texture spans 0 to 1; one in an atlas spans its region's rectangle
+        final float originU = region == null ? 0f : region.u0();
+        final float originV = region == null ? 0f : region.v0();
+        final float spanU = region == null ? 1f : region.u1() - region.u0();
+        final float spanV = region == null ? 1f : region.v1() - region.v0();
         for (int row = 0; row < 3; row++) {
             for (int column = 0; column < 3; column++) {
                 if (dx[column + 1] > dx[column] && dy[row + 1] > dy[row] && sx[column + 1] > sx[column]
                         && sy[row + 1] > sy[row]) {
-                    this.texture(texture, dx[column], dy[row], dx[column + 1], dy[row + 1],
-                            sx[column] / (float) w, sy[row] / (float) h, sx[column + 1] / (float) w,
-                            sy[row + 1] / (float) h, tint);
+                    this.texture(set, stamp, mode, dx[column], dy[row], dx[column + 1], dy[row + 1],
+                            originU + sx[column] / (float) w * spanU, originV + sy[row] / (float) h * spanV,
+                            originU + sx[column + 1] / (float) w * spanU, originV + sy[row + 1] / (float) h * spanV,
+                            tint);
                 }
             }
         }
@@ -749,6 +784,17 @@ final class VulkanCanvas implements Canvas {
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    /**
+     * Returns the region a sprite draws from, if it has one in an atlas this canvas's renderer can draw from.
+     */
+    private VulkanSprites.AtlasRegion region(final SpriteId sprite) {
+        if (this.sprites == null) {
+            return null;
+        }
+        final VulkanSprites.AtlasRegion region = this.sprites.region(sprite);
+        return region != null && region.atlas().belongsTo(this.renderer) ? region : null;
+    }
 
     private Optional<VulkanSprites.SpriteImage> image(final SpriteId sprite) {
         return this.sprites == null ? Optional.empty() : this.sprites.image(sprite, this.scale);
