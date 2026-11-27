@@ -157,6 +157,16 @@ public final class VulkanSprites {
     }
 
     /**
+     * Forgets the regions of every atlas a renderer cannot draw from, those of another renderer or a closed one, and
+     * moves the version on if any went, for a view that moved to this renderer.
+     */
+    void removeRegionsOutside(final VulkanRenderer renderer) {
+        if (this.regions.values().removeIf(region -> !region.atlas().belongsTo(renderer))) {
+            this.touch();
+        }
+    }
+
+    /**
      * Moves the version on without forgetting any image, for what the sprites draw from outside this set changing.
      */
     void touch() {

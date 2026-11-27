@@ -339,8 +339,8 @@ final class FrameStream implements AutoCloseable {
     }
 
     /**
-     * Waits for this stream's uploads and frees its buffers. The application must have waited for the device to
-     * finish the frames that used them.
+     * Waits for this stream's uploads and frees its buffers, without waiting when the renderer is closing because its
+     * device was lost. The application must have waited for the device to finish the frames that used them.
      */
     @Override
     public void close() {
@@ -378,13 +378,16 @@ final class FrameStream implements AutoCloseable {
         }
 
         /**
-         * Waits until the device has finished this slot's last uploads.
+         * Waits until the device has finished this slot's last uploads, unless the renderer is closing because its
+         * device was lost, which finishes none.
          */
         void await(final VulkanRenderer renderer) {
             if (this.pending) {
-                try (MemoryStack stack = MemoryStack.stackPush()) {
-                    Vk.check(vkWaitForFences(renderer.device(), stack.longs(this.fence), true, NO_WAIT_LIMIT),
-                            "wait for uploads");
+                if (!renderer.isLost()) {
+                    try (MemoryStack stack = MemoryStack.stackPush()) {
+                        Vk.check(vkWaitForFences(renderer.device(), stack.longs(this.fence), true, NO_WAIT_LIMIT),
+                                "wait for uploads");
+                    }
                 }
                 this.pending = false;
             }

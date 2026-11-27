@@ -185,7 +185,9 @@ import static org.lwjgl.vulkan.VK13.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_
  * {@code framesInFlight} more frames.</p>
  *
  * <p>Use the renderer on the application's render thread only, the thread that calls {@link StrataVulkan#render}.
- * Close every view first, wait for the device to finish their frames, then close the renderer.</p>
+ * Close every view first, wait for the device to finish their frames, then close the renderer. A view that is to
+ * outlive the renderer moves to another with {@link StrataVulkan#setRenderer} instead, so its screens stay open.
+ * When the device was lost, nothing can be waited for: close the renderer with {@link #closeLost()}.</p>
  */
 public final class VulkanRenderer implements AutoCloseable {
     private static final String SHADERS = "org/inspirenxe/strata/vulkan/shaders/";
@@ -214,6 +216,7 @@ public final class VulkanRenderer implements AutoCloseable {
     // Moves on whenever a resource is retired, so a stream knows its last frame may sample one
     private long retirements;
     private boolean closed;
+    private boolean lost;
 
     /**
      * Creates the renderer and its pipeline.
@@ -396,7 +399,9 @@ public final class VulkanRenderer implements AutoCloseable {
 
     /**
      * Destroys every device resource. Close every {@link StrataVulkan} that uses the renderer, and wait for the device
-     * to finish their frames, first. Calling it again does nothing.
+     * to finish their frames, first. A view that still uses it loses its buffers here, after waiting for the uploads
+     * it last submitted; a device that was lost never finishes them, so close the renderer with {@link #closeLost()}
+     * then. Calling it again does nothing.
      */
     @Override
     public void close() {
@@ -430,6 +435,24 @@ public final class VulkanRenderer implements AutoCloseable {
         vkDestroyDescriptorSetLayout(this.device, this.masksLayout, null);
         vkDestroyCommandPool(this.device, this.commandPool, null);
         vmaDestroyAllocator(this.allocator);
+    }
+
+    /**
+     * Destroys every device resource of a device that was lost, as {@link #close()} does but without waiting for the
+     * device: a lost device finishes no upload and runs no frame, so nothing it was doing is waited for, and every
+     * resource, the fences and command buffers of the views' uploads included, is destroyed at once. Vulkan allows
+     * destroying the objects of a lost device. A view that used the renderer keeps its screens and moves to the
+     * application's next renderer with {@link StrataVulkan#setRenderer}. The {@link VulkanImage}s and
+     * {@link VulkanAtlas}es it made are gone with it, and a callback given to {@link VulkanAtlas#close(Runnable)} runs
+     * at once, which is where the application lets go of the image the device no longer has. Calling it on a closed
+     * renderer does nothing.
+     */
+    public void closeLost() {
+        if (this.closed) {
+            return;
+        }
+        this.lost = true;
+        this.close();
     }
 
     // ------------------------------------------------------------------
@@ -489,6 +512,13 @@ public final class VulkanRenderer implements AutoCloseable {
 
     boolean isClosed() {
         return this.closed;
+    }
+
+    /**
+     * Returns whether the renderer is closing because its device was lost, so nothing waits for the device.
+     */
+    boolean isLost() {
+        return this.lost;
     }
 
     /**

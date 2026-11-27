@@ -72,6 +72,9 @@ import java.util.function.Predicate;
  *     nothing changed needs no recording and no present. Call {@link #invalidate()} when the kept image is lost, such
  *     as after the swapchain was made again. An application that clears its image every frame uses {@link #render},
  *     which records every draw.</li>
+ *     <li>A view outlives its renderer. When the application makes another, such as for a new target or on a new device
+ *     after the old one was lost, {@link #setRenderer} moves the view to it, and the screens stay open with all
+ *     their state.</li>
  * </ul>
  *
  * <p>Use it on the render thread only, the thread that renders it and sends it input.</p>
@@ -80,10 +83,10 @@ public final class StrataVulkan implements AutoCloseable {
     private static StrataVulkan defaultView;
 
     private final VulkanPlatform platform;
-    private final VulkanRenderer renderer;
     private final VulkanTextMetrics textMetrics;
     private final ScreenStack screens;
-    private final FrameStream frames;
+    private VulkanRenderer renderer;
+    private FrameStream frames;
     private VulkanSprites sprites;
     private VulkanImage backdrop;
     // The version of the sprites the last frame drew, or -1 when it must not be drawn again
@@ -193,6 +196,51 @@ public final class StrataVulkan implements AutoCloseable {
         final VulkanSprites given = this.sprites;
         this.sizedSprites = given.version();
         this.screens.setSpriteSizes(given::size);
+    }
+
+    /**
+     * Moves the view to another renderer and keeps everything the view holds apart from the device: the screens and
+     * their state, the bounds, the scale, the platform and the sprites. Use it when the renderer has to be made
+     * again, such as for another {@link VulkanTarget} or on a new device after the old one was lost, where closing the
+     * view would close every screen. The next frame draws every screen again, at once whatever the frame rate. The
+     * textures of sprites and pixel buffers, the glyphs and the descriptor sets are made on the new renderer when a
+     * frame first needs them.
+     *
+     * <p>After a lost device, close the old renderer first with {@link VulkanRenderer#closeLost()}, which waits for
+     * nothing, so the view has nothing left to release on it. A renderer that is still open loses the view's buffers
+     * here, after the wait for the uploads the view last submitted that {@link #close()} makes, so wait for the device
+     * to finish the view's frames before the call. The old renderer stays the application's to close, or to keep for
+     * its other views. The new renderer must be open. Its {@linkplain VulkanRenderer#target() target} is what the view
+     * draws into from the next frame.</p>
+     *
+     * <p>What the old renderer made does not move with the view. Its {@link VulkanImage}s and {@link VulkanAtlas}es
+     * draw their placeholder on the new renderer, or the sprites from their own images, so the application makes them
+     * again on the new renderer, gives the screens that show an image the new one, and gives each sprite its region
+     * in the new atlas. The regions of atlases the new renderer cannot draw from are forgotten here, so those sprites
+     * measure as their own images until then. The backdrop is dropped unless the new renderer made it; give it again
+     * with {@link #setBackdrop}. A {@link VulkanFrame} prepared before the call can no longer be recorded.</p>
+     *
+     * @param renderer the new renderer; the one the view already uses changes nothing
+     * @throws IllegalStateException if the view or the new renderer is closed, or Vulkan fails to make the view's
+     *                               buffers on the new one, and the view stays on its old renderer, or the wait for
+     *                               the old renderer's uploads fails, and the view has moved
+     */
+    public void setRenderer(final VulkanRenderer renderer) {
+        this.checkOpen();
+        Objects.requireNonNull(renderer, "renderer");
+        if (renderer == this.renderer) {
+            return;
+        }
+        final FrameStream frames = renderer.openStream();
+        final FrameStream released = this.frames;
+        this.renderer = renderer;
+        this.frames = frames;
+        this.prepared++;
+        this.sprites.removeRegionsOutside(renderer);
+        if (this.backdrop != null && !this.backdrop.belongsTo(renderer)) {
+            this.backdrop = null;
+        }
+        released.close();
     }
 
     /**
