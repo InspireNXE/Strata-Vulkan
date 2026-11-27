@@ -15,7 +15,9 @@
  */
 /**
  * Connects Strata's Vulkan views to GLFW windows: input, size, display scale, cursors, title, close button and the
- * clipboard. The classes here need LWJGL's GLFW bindings, which the adapter does not bring; an application that uses
- * GLFW has them already.
+ * clipboard. {@link org.inspirenxe.strata.vulkan.glfw.StrataGlfw} calls GLFW itself, on the thread it is used on;
+ * {@link org.inspirenxe.strata.vulkan.glfw.StrataHost} makes no GLFW call, for an application that renders on a different
+ * thread from the one that runs GLFW. The classes here need LWJGL's GLFW bindings, which the adapter does not bring;
+ * an application that uses GLFW has them already.
  */
 package org.inspirenxe.strata.vulkan.glfw;

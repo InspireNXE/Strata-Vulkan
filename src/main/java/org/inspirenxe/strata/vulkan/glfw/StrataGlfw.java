@@ -16,16 +16,10 @@
 package org.inspirenxe.strata.vulkan.glfw;
 
 import org.inspirenxe.strata.api.component.CursorKind;
-import org.inspirenxe.strata.api.input.Key;
-import org.inspirenxe.strata.api.input.Modifiers;
-import org.inspirenxe.strata.api.input.MouseButton;
-import org.inspirenxe.strata.api.input.ScrollKind;
-import org.inspirenxe.strata.api.transfer.Transfer;
 import org.inspirenxe.strata.spi.ScreenStack;
 import org.inspirenxe.strata.vulkan.StrataVulkan;
 import org.inspirenxe.strata.vulkan.VulkanPlatform;
 import org.inspirenxe.strata.vulkan.VulkanTextMetrics;
-import org.inspirenxe.strata.vulkan.VulkanWindow;
 import org.lwjgl.glfw.GLFWCharCallback;
 import org.lwjgl.glfw.GLFWCursorEnterCallback;
 import org.lwjgl.glfw.GLFWCursorPosCallback;
@@ -68,7 +62,6 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOD_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_MOD_SUPER;
 import static org.lwjgl.glfw.GLFW.GLFW_NOT_ALLOWED_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_POINTING_HAND_CURSOR;
-import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
 import static org.lwjgl.glfw.GLFW.GLFW_RESIZE_ALL_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_RESIZE_EW_CURSOR;
@@ -125,26 +118,26 @@ import static org.lwjgl.glfw.GLFW.glfwSetWindowTitle;
  * window's coordinates to the framebuffer's and then to UI units. GLFW sends key repeats, so build the platform with
  * {@link #platform}, which also gives it GLFW's clipboard.</p>
  *
- * <p>GLFW runs on the main thread, so use this class there, the thread that also renders the view.</p>
+ * <p>GLFW runs on the main thread, so use this class there, the thread that also renders the view. An application
+ * that renders on another thread uses {@link StrataHost}, which makes no GLFW call. This class turns each event into
+ * one for a {@link StrataHost} by reading the pointer position and the held modifiers from the window, and answers as
+ * that host's {@link WindowHost}.</p>
  */
-public final class StrataGlfw implements VulkanWindow, AutoCloseable {
+public final class StrataGlfw implements WindowHost, AutoCloseable {
     private final long window;
     private final StrataVulkan strata;
+    private final StrataHost host;
     private final Map<CursorKind, Long> cursors;
     private final List<Runnable> restore;
-    private float zoom;
     private String windowTitle;
     private boolean managed;
 
     private StrataGlfw(final long window, final StrataVulkan strata, final float zoom) {
-        StrataGlfw.checkZoom(zoom);
         this.window = window;
         this.strata = Objects.requireNonNull(strata, "strata");
         this.cursors = new EnumMap<>(CursorKind.class);
         this.restore = new ArrayList<>();
-        this.zoom = zoom;
-        strata.setWindow(this);
-        this.updateSize();
+        this.host = new StrataHost(strata, this, zoom);
     }
 
     /**
@@ -217,7 +210,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @return UI units per display unit
      */
     public float zoom() {
-        return this.zoom;
+        return this.host.zoom();
     }
 
     /**
@@ -227,9 +220,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @throws IllegalArgumentException if the zoom is not finite and positive
      */
     public void setZoom(final float zoom) {
-        StrataGlfw.checkZoom(zoom);
-        this.zoom = zoom;
-        this.updateSize();
+        this.host.setZoom(zoom);
     }
 
     /**
@@ -237,16 +228,27 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * call it when either changes.
      */
     public void updateSize() {
+        this.host.updateSize();
+    }
+
+    /**
+     * Reads the window's size, framebuffer size and content scale from GLFW.
+     *
+     * @return the metrics
+     */
+    @Override
+    public WindowMetrics metrics() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            final IntBuffer windowWidth = stack.mallocInt(1);
+            final IntBuffer windowHeight = stack.mallocInt(1);
+            glfwGetWindowSize(this.window, windowWidth, windowHeight);
             final IntBuffer width = stack.mallocInt(1);
             final IntBuffer height = stack.mallocInt(1);
             glfwGetFramebufferSize(this.window, width, height);
             final FloatBuffer scaleX = stack.mallocFloat(1);
             final FloatBuffer scaleY = stack.mallocFloat(1);
             glfwGetWindowContentScale(this.window, scaleX, scaleY);
-            final float content = scaleX.get(0) > 0f ? scaleX.get(0) : 1f;
-            this.strata.setScale(this.zoom * content);
-            this.strata.setBounds(0, 0, Math.max(0, width.get(0)), Math.max(0, height.get(0)));
+            return new WindowMetrics(windowWidth.get(0), windowHeight.get(0), width.get(0), height.get(0), scaleX.get(0));
         }
     }
 
@@ -264,8 +266,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @return true if Strata used the key
      */
     public boolean key(final int key, final int scancode, final int action, final int mods) {
-        final Key strataKey = GlfwInput.key(key);
-        return this.strata.screens().key(strataKey, GlfwInput.action(action), GlfwInput.modifiers(mods));
+        return this.host.key(key, scancode, action, mods);
     }
 
     /**
@@ -275,7 +276,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @return true if Strata used the character
      */
     public boolean charTyped(final int codePoint) {
-        return GlfwInput.isText(codePoint) && this.strata.screens().charTyped(codePoint, this.heldModifiers());
+        return this.host.charTyped(codePoint, this.heldModifiers());
     }
 
     /**
@@ -286,7 +287,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @return true if the pointer is over Strata's screens or dragging in them
      */
     public boolean cursorPos(final double x, final double y) {
-        return this.strata.screens().pointerMoved(this.unitX(x), this.unitY(y), this.heldModifiers());
+        return this.host.cursorPos(x, y, this.heldModifiers());
     }
 
     /**
@@ -299,13 +300,11 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @return true if Strata used the button
      */
     public boolean mouseButton(final int button, final int action, final int mods) {
-        final MouseButton strataButton = GlfwInput.button(button);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             final DoubleBuffer x = stack.mallocDouble(1);
             final DoubleBuffer y = stack.mallocDouble(1);
             glfwGetCursorPos(this.window, x, y);
-            return this.strata.screens().pointerButton(this.unitX(x.get(0)), this.unitY(y.get(0)), strataButton,
-                    action == GLFW_PRESS, GlfwInput.modifiers(mods));
+            return this.host.mouseButton(button, action, mods, x.get(0), y.get(0));
         }
     }
 
@@ -319,21 +318,11 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @return true if Strata used the scroll
      */
     public boolean scroll(final double xOffset, final double yOffset) {
-        final Modifiers modifiers = this.heldModifiers();
-        final boolean whole = xOffset == Math.rint(xOffset) && yOffset == Math.rint(yOffset);
-        final ScrollKind kind = whole ? ScrollKind.WHEEL : ScrollKind.PRECISE;
-        float scrollX = (float) xOffset;
-        float scrollY = (float) yOffset;
-        if (modifiers.shift() && scrollX == 0f) {
-            scrollX = scrollY;
-            scrollY = 0f;
-        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             final DoubleBuffer x = stack.mallocDouble(1);
             final DoubleBuffer y = stack.mallocDouble(1);
             glfwGetCursorPos(this.window, x, y);
-            return this.strata.screens().scroll(this.unitX(x.get(0)), this.unitY(y.get(0)), scrollX, scrollY, kind,
-                    modifiers);
+            return this.host.scroll(xOffset, yOffset, x.get(0), y.get(0), this.heldModifiers());
         }
     }
 
@@ -343,9 +332,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
      * @param entered true when the pointer entered
      */
     public void cursorEnter(final boolean entered) {
-        if (!entered) {
-            this.strata.screens().pointerLeft();
-        }
+        this.host.cursorEnter(entered);
     }
 
     /**
@@ -362,8 +349,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
             final DoubleBuffer x = stack.mallocDouble(1);
             final DoubleBuffer y = stack.mallocDouble(1);
             glfwGetCursorPos(this.window, x, y);
-            return this.strata.screens().dropped(this.unitX(x.get(0)), this.unitY(y.get(0)), Transfer.files(paths),
-                    this.heldModifiers()).isPresent();
+            return this.host.drop(paths, x.get(0), y.get(0), this.heldModifiers());
         }
     }
 
@@ -406,7 +392,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
             }
         }
         this.cursors.clear();
-        this.strata.setWindow(null);
+        this.host.close();
     }
 
     private void install() {
@@ -483,7 +469,7 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
 
         final GLFWWindowFocusCallback focus = glfwSetWindowFocusCallback(this.window, null);
         this.callback(GLFWWindowFocusCallback.create((window, focused) -> {
-            this.strata.screens().activeChanged(focused);
+            this.host.focusChanged(focused);
             if (focus != null) {
                 focus.invoke(window, focused);
             }
@@ -533,9 +519,9 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
     }
 
     /**
-     * Reads the modifiers held now, for events whose callback does not carry them.
+     * Reads the modifiers held now, as {@code GLFW_MOD_*} bits, for events whose callback does not carry them.
      */
-    private Modifiers heldModifiers() {
+    private int heldModifiers() {
         int mods = 0;
         if (this.held(GLFW_KEY_LEFT_SHIFT) || this.held(GLFW_KEY_RIGHT_SHIFT)) {
             mods |= GLFW_MOD_SHIFT;
@@ -549,45 +535,10 @@ public final class StrataGlfw implements VulkanWindow, AutoCloseable {
         if (this.held(GLFW_KEY_LEFT_SUPER) || this.held(GLFW_KEY_RIGHT_SUPER)) {
             mods |= GLFW_MOD_SUPER;
         }
-        return GlfwInput.modifiers(mods);
+        return mods;
     }
 
     private boolean held(final int key) {
         return glfwGetKey(this.window, key) != GLFW_RELEASE;
-    }
-
-    /**
-     * Converts a horizontal position in the window's coordinates to UI units in the view.
-     */
-    private float unitX(final double x) {
-        return this.strata.unitX(x * this.framebufferRatio(true));
-    }
-
-    private float unitY(final double y) {
-        return this.strata.unitY(y * this.framebufferRatio(false));
-    }
-
-    /**
-     * Returns how many framebuffer pixels one unit of the window's coordinates covers: 1 on Windows and most of Linux,
-     * the display's scale on macOS and Wayland.
-     */
-    private double framebufferRatio(final boolean horizontal) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            final IntBuffer windowWidth = stack.mallocInt(1);
-            final IntBuffer windowHeight = stack.mallocInt(1);
-            glfwGetWindowSize(this.window, windowWidth, windowHeight);
-            final IntBuffer width = stack.mallocInt(1);
-            final IntBuffer height = stack.mallocInt(1);
-            glfwGetFramebufferSize(this.window, width, height);
-            final int window = horizontal ? windowWidth.get(0) : windowHeight.get(0);
-            final int framebuffer = horizontal ? width.get(0) : height.get(0);
-            return window > 0 ? (double) framebuffer / window : 1.0;
-        }
-    }
-
-    private static void checkZoom(final float zoom) {
-        if (!(zoom > 0f) || Float.isInfinite(zoom)) {
-            throw new IllegalArgumentException("Zoom must be finite and positive: " + zoom);
-        }
     }
 }
